@@ -28,3 +28,7 @@ dependencies = [
 Homepage = "https://github.com/NikoDemon80/ComfyUI-Image-Oasis"
 Repository = "https://github.com/NikoDemon80/ComfyUI-Image-Oasis"
 Issues = "https://github.com/NikoDemon80/ComfyUI-Image-Oasis/issues"
+
+[tool.comfy]
+PublisherId = "nikodemon80"
+DisplayName = "ComfyUI-Image-Oasis"
