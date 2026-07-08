@@ -84,6 +84,89 @@ node, and is not planned here.
 * **A companion node** - not planned. Everything the node needs rides inside
 it; feeding an output back in is a drag onto the Img2Img Init slot.
 
+## What's new in v1.4
+
+* **Img2img on every non-Qwen architecture** via a new **Init** slot in the
+Reference Images section. Occupied slot enables it, clearing it returns to
+noise. Think image *inspiration* rather than editing: the model remakes your
+image in its own style, carrying over structure, composition, and palette.
+Denoise is the strength dial - start around 0.5. The Init slot has full
+parity with the other slots (upload, drag-drop, paste, clear, compare-base).
+* **Latent section** consolidating everything that shapes the canvas:
+Width/Height with a ↔ swap, aspect-ratio presets (1:1, 2:3, 3:4, 9:16, 16:9,
+4:3, 3:2) that lock the fields together on the nearest /16, a **Fit Method**
+row, and Batch.
+* **Fit Method** (Stretch / Crop / Pad) controlling how incoming images are
+conformed to the latent size on *both* image paths: the img2img init image
+on non-Qwen architectures, and the edit references on Qwen-Image-Edit -
+which previously scaled references by its own internal policy. Crop is the
+default; Pad fills leftover space with edge replication rather than black
+bars.
+* **Reference image info** - every occupied reference/init slot shows the
+image's resolution and file size, with a one-click ⤢ button that sets the
+latent Width/Height to the source dimensions (snapped to /16).
+* **Interrupt button** (⏹) on the output header, visible only while a run is
+in progress.
+* **Boogu-Image 0.1 (Base / Turbo)** added as a first-class architecture, with
+its own `boogu` CLIP type. Uses the Flux VAE and a Qwen3-VL-8B text encoder.
+The Edit variant is not supported.
+* **Krea 2 conditioning rebalance, built in.** Krea 2 conditions on 12 stacked
+text-encoder layers, and alignment training under-weights the deep layers
+that carry fine detail and identity; the node now reweights them as part of
+the encode path, RMS-renormalized so overall conditioning strength is
+unchanged. Always on, no control to set. Krea 2 seeds from v1.3 render
+slightly differently as a result. Technique credit: nova452 and huwhitememes
+(both Apache-2.0).
+* **Variety control** in the Generation section for the "every seed looks the
+same" problem on distilled models (Z-Image Turbo, Krea 2 Turbo, Boogu Turbo,
+and similar). A single dial that adds tiny seeded noise to the prompt
+conditioning during the early sampling steps, so re-rolling the seed
+produces genuinely different compositions while prompt adherence and detail
+stay faithful. 0 is off (default); start around 0.1. Same seed + same Variety
+reproduces the same image.
+* **Sage-attention fail-fast for Krea 2.** Krea 2 + `--use-sage-attention` used
+to silently produce NaN latents (black images); the node now refuses the run
+up front with a clear error naming the flag. Registry-driven, so future
+arch/flag incompatibilities are a one-line addition.
+* **NaN warning on the preview path** - corrupted latents reaching the preview
+now print a loud warning naming the likely cause instead of being silently
+clamped to a black image.
+* **VAE decode falls back to tiled decoding on OOM** instead of failing after
+the sampling work is already done.
+* **Enhancer VRAM behavior tightened.** The diffusion model is no longer
+evicted by passive events (adding a node, switching workflow tabs, changing
+the enhancer model dropdown). Eviction happens only when Enhance is actually
+clicked. Auto GPU layers are computed after that eviction against real free
+VRAM, and the recommendation label updates to the layer count actually used.
+Enhance is refused while an image is generating, and concurrent enhance
+requests from multiple nodes are serialized instead of racing the loader.
+* **Rerun overhead removed.** Reference and init images are content-hashed
+through a stat-based memo and only loaded/decoded when a cache miss actually
+needs to encode them, so a seed-only rerun costs a file stat per image
+instead of a read, decode, and hash.
+* **Architecture and CLIP type definitions served from the registry** to the
+frontend, removing the last hand-synced frontend mirrors. Adding an image
+architecture is now a registry-only change end to end.
+* **Fixed** a v1.0-era bug where the plain text-encode path silently dropped
+conditioning extras (attention mask, etc.) the text encoder attached. The
+node now returns ComfyUI's full conditioning structure exactly like the
+stock `CLIPTextEncode` node. This was fatal for Boogu-Image and subtly lossy
+for other mask-emitting encoders (Qwen-Image, Krea 2) - conditioning for
+those architectures now matches stock ComfyUI, so seeds may render slightly
+differently than in earlier Image Oasis versions.
+* **Fixed** a bug where the theme save routes reported success even when the
+write to disk had failed, plus a batch of dead code and lint issues flagged
+by the registry workflow.
+
+## What's new in v1.3
+
+* **Krea 2 (Turbo / Raw) added as a first-class architecture**, with a new
+`krea2` CLIP type for Qwen3-VL-4B's 12-layer stacked hidden state. The 1.15
+flow shift is baked into the model config, so no sampling patch is applied.
+* **Note:** Krea 2 produces black images when ComfyUI is launched with
+`--use-sage-attention`. Remove the flag when generating with Krea 2. Other
+architectures are unaffected. (v1.4 turns this into a hard, up-front error.)
+
 ## What's new in v1.2
 
 * **Prompt enhancer split into two boxes** - a sticky **User Prompt** (your short input)
