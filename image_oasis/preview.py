@@ -3,14 +3,14 @@ On-node image preview for Image Oasis.
 
 Writes the decoded image batch to ComfyUI's temp directory with embedded PNG
 metadata (prompt + workflow) and returns the standard ComfyUI
-[{filename, subfolder, type:"temp"}] list. nodes.py sends that list to the
+[{filename, subfolder, type:"temp"}] list. nodes_image.py sends that list to the
 frontend via the "image-oasis/result" WebSocket event, keyed by the node's
 stable io_id — NOT via ui["images"], which would route by raw numeric node id
 against the currently active graph and misdeliver to same-id nodes on other
 workflows (see the comment at the end of ImageOasis.generate).
 
 This is the temp-save core only; the explicit save-to-output route lives in
-routes.py.
+routes_image.py.
 """
 
 import os

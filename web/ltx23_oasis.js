@@ -79,6 +79,7 @@ const CSS = `
 .iov-widget .io-col-left{display:flex;flex-direction:column;gap:9px;overflow-y:auto;overflow-x:hidden;flex:1;min-height:0;min-width:0;}
 .iov-widget .io-col-left::-webkit-scrollbar{width:4px;}
 .iov-widget .io-col-left::-webkit-scrollbar-thumb{background:var(--io-bd,#3a3a3a);border-radius:2px;}
+.iov-widget .io-col-left::-webkit-scrollbar-thumb:hover{background:var(--io-bd,#3a3a3a);}
 .iov-widget .io-bypass-bar{flex:0 0 auto;padding-top:8px;margin-top:4px;border-top:1px solid var(--io-bd,#3a3a3a);}
 .iov-widget .io-bypass-btn{width:100%;box-sizing:border-box;height:30px;margin:0;border-radius:4px;border:1px solid var(--io-bd,#3a3a3a);background:#191919;color:#ddd;font-family:var(--io-mono,'Space Mono',monospace);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;}
 .iov-widget .io-bypass-btn:hover{border-color:#777;color:#fff;}
@@ -225,6 +226,11 @@ const CSS = `
 .iov-widget .vo-history{display:flex;gap:5px;overflow-x:auto;padding:4px 9px 6px;min-height:58px;flex-shrink:0;border-top:1px solid var(--io-bd,#3a3a3a);}
 .iov-widget .vo-history::-webkit-scrollbar{height:6px;}
 .iov-widget .vo-history::-webkit-scrollbar-thumb{background:var(--io-bd,#3a3a3a);border-radius:3px;}
+/* Explicit :hover twin. The two-class scope already outranks ComfyUI's global
+   ::-webkit-scrollbar-thumb:hover rule, which is why this strip never had the
+   vanishing-thumb problem IO and VOV did; stating it keeps that immunity from
+   depending on a specificity margin nobody can see. */
+.iov-widget .vo-history::-webkit-scrollbar-thumb:hover{background:var(--io-bd,#3a3a3a);}
 /* Two-tier thumb state:
  *   base (temp)     : dashed green border  — preview, not persisted on restart
  *   .vo-saved       : solid  green border  — copied to output/, survives restart
@@ -491,7 +497,7 @@ const FORMATS = ["auto","mp4","webm","mkv"];
 const CODECS = ["auto","h264","hevc","vp9","av1"];
 const QUALITIES = ["balanced","high","small","custom"];
 const SPEEDS = [0.25,0.5,1,1.5,2];
-const HISTORY_CAP = 24;
+const HISTORY_CAP = 48;
 const MAX_SEED = 1125899906842624;
 
 // Registry fallback until /ltx23_oasis/models responds (kept if it never
@@ -579,7 +585,7 @@ app.registerExtension({
         relay_segments:[],
         start_image:"",
         audio_file:"",
-        continue_last:false,
+        continue_last:false, context_frames:0,
         width:1280, height:720, aspect_lock:"",
         seed:0, seed_control:"randomize",
         format:"auto", codec:"auto", quality:"balanced", crf:20,
@@ -624,10 +630,10 @@ app.registerExtension({
       // Scene-bar reorder state (long-press to enter drag). Closure-only;
       // never serialized. dragEntry non-null means a drag is in flight.
       let dragEntry = null, holdTimer = null, pointerStart = null;
-      // Continue-from-viewed: which entry's tail frame the server currently
-      // holds under _LAST_FRAME[io_id]. Fresh generations set this directly
-      // (server-side exact tensor); thumb clicks trigger a debounced upload
-      // that overwrites it. Null on first load / after restart.
+      // Continue-from-viewed: which entry the server currently has
+      // registered under _TAIL_SRC[io_id]. Fresh generations and thumb
+      // clicks both trigger a debounced register; the server decodes the
+      // tail off disk at generate time. Null on first load / after restart.
       let tailSourceEntry = null, _tailDebounceT = null;
       const TAIL_DEBOUNCE_MS = 400;
       // Timer state (IO's closure pattern)
@@ -652,6 +658,14 @@ app.registerExtension({
           </div>
           ${open[key]?`<div class="io-sec-body">${bodyHTML}</div>`:""}
         </div>`;
+      // Motion-context windows, in PIXEL frames. These are 8n+1 counts like
+      // every other LTX length: the first latent frame of a sequence decodes
+      // to ONE pixel frame and each later one to 8, so 17 real frames is 3
+      // latent frames. The window is sampled in front of the delivered clip
+      // and dropped after decode, which costs 8*latent extra frames.
+      const CONTEXT_WINDOWS = [0, 9, 17, 25, 33, 41, 49];
+      const ctxLatent = (px) => px > 0 ? Math.floor((px - 1) / 8) + 1 : 0;
+      const ctxOverhead = (px) => 8 * ctxLatent(px);
       const chk = (field,label) => `
         <label class="io-chk" data-chk="${field}">
           <span class="io-chk-box${st[field]?" on":""}">${st[field]?"\u2713":""}</span>${label}
@@ -764,6 +778,19 @@ app.registerExtension({
         const p = new URLSearchParams({filename:fn.split("/").pop(), subfolder:fn.includes("/")?fn.slice(0,fn.lastIndexOf("/")):"", type:"input", t:Date.now()});
         return `${window.location.origin}/view?${p}`;
       };
+      // File slots STORE the subfolder-qualified name, because that is what
+      // /view and the backend both need. Printing the whole thing in a
+      // one-line button pushes the actual filename off the right edge under
+      // the CSS ellipsis, so a file dragged in from Audio Oasis
+      // (audio_oasis/<track>/<track>_seg003.wav) reads as an unidentifiable
+      // folder path. Show the leaf, keep the full path on the hover title,
+      // print the folder on its own line where there is room for it.
+      const leafOf = (fn) => String(fn || "").split("/").pop();
+      const dirOf = (fn) => {
+        const s = String(fn || "");
+        const i = s.lastIndexOf("/");
+        return i > 0 ? s.slice(0, i) : "";
+      };
       const refSlot = (field, label, dim, extraHTML="") => {
         const fn = st[field];
         const tt = `title="Drop an image here, or click and paste (Ctrl+V)"`;
@@ -774,7 +801,7 @@ app.registerExtension({
         return `<div class="io-refslot${dim?" io-refslot-dim":""}">
           ${thumb}
           <div class="io-ref-mid">
-            <button class="io-ref-btn" data-ref-upload="${field}">${fn?esc(fn):("Upload "+label.toLowerCase()+" image\u2026")}</button>
+            <button class="io-ref-btn" data-ref-upload="${field}"${fn?` title="${esc(fn)}"`:""}>${fn?esc(leafOf(fn)):("Upload "+label.toLowerCase()+" image\u2026")}</button>
             ${fn?refInfoHtml(fn):""}
           </div>
           ${fn?`<button class="io-ref-clear" data-ref-clear="${field}">\u2715</button>`:""}
@@ -788,6 +815,11 @@ app.registerExtension({
           ${!startLive?`<div class="io-mini" style="opacity:.6">Ignored: Text \u2192 Video generates from the prompt alone. Switch to Image \u2192 Video in Prompt Enhancer to use a start image.</div>`:""}
           <div class="io-row" style="margin-top:2px">${chk("continue_last","\u21bb Continue from viewed video (last frame of what's in the viewer becomes the start)")}</div>
           ${st.continue_last?`<div class="io-mini" style="opacity:.7">Whatever's playing in the right pane is the tail source: click a different thumbnail in the scene bar and the next run will start from ITS last frame. Works in every mode; overrides the Start slot. First run of a session with nothing loaded generates as plain T2V.</div>`:""}
+          ${st.continue_last?`<div class="io-row" style="margin-top:4px">
+            <span class="io-label" title="How much of the previous clip to pin in front of the timeline as motion reference. A single frame gives the model a pose but no direction or speed, which is why chained clips can start moving the wrong way. These frames sit outside your clip and are cropped off after decode, so you get back exactly the frames and audio length you asked for. On Generate audio, the previous clip's tail sound is pinned under the context too, so the soundtrack carries across the join. On File audio, your track is never trimmed or shifted: the context window gets silence and your file starts on frame 1.">Motion context</span>
+            <select class="io-select" data-f="context_frames">${CONTEXT_WINDOWS.map(n=>`<option value="${n}"${Number(st.context_frames)===n?" selected":""}>${n===0?"Last frame only":`${n} frames \u00b7 ${(n/(Number(st.fps)||25)).toFixed(2)}s`}</option>`).join("")}</select>
+          </div>`:""}
+          ${st.continue_last&&Number(st.context_frames)>0?`<div class="io-mini" style="opacity:.7">Sampling ${Number(st.frames)+ctxOverhead(Number(st.context_frames))} frames to deliver ${Number(st.frames)}. Frames, audio, and the delivered length are unchanged \u2014 the context is extra work in front, not a shorter clip.</div>`:""}
         `);
       };
 
@@ -1020,11 +1052,13 @@ app.registerExtension({
         const fn = (st.audio_file || "").trim();
         if (fn) probeAudioDur(fn);
         const info = audioMeterInfo();
+        const dir = dirOf(fn);
         return `
           <div class="io-row" data-audio-drop title="Audio file that DRIVES the video \u2014 lip sync, singing, music-timed motion. Drop a file or click to browse.">
-            <button class="io-ref-btn" data-audio-upload style="flex:1">${fn ? esc(fn) : "Upload audio (mp3/wav/flac)\u2026"}</button>
+            <button class="io-ref-btn" data-audio-upload style="flex:1"${fn ? ` title="${esc(fn)}"` : ""}>${fn ? esc(leafOf(fn)) : "Upload audio (mp3/wav/flac)\u2026"}</button>
             ${fn ? `<button class="io-ref-clear" data-audio-clear>\u2715</button>` : ""}
           </div>
+          ${dir ? `<div class="io-mini" style="opacity:.55">in ${esc(dir)}/</div>` : ""}
           ${fn ? `<div class="io-mini io-beat-sum${info.tone ? ` ${info.tone}` : ""}" data-audio-meter>${esc(info.text)}</div>` : ""}
           <div class="io-mini" style="opacity:.65">The file is kept as-is (masked from sampling) and the video is generated to match it. Shorter than the video = the tail gets generated audio.</div>`;
       };
@@ -1173,7 +1207,7 @@ app.registerExtension({
         <div class="io-row">
           <button class="io-btn" data-theme-reset style="margin-top:0;flex:1">Reset to default</button>
         </div>
-        <div class="io-mini" style="opacity:.7">LTX2.3 Oasis keeps its own palette \u2014 changes here do not affect Image Oasis.</div>
+        <div class="io-mini" style="opacity:.7">LTX2.3 Oasis keeps its own palette, shared with Video Oasis Viewer. Edits preview live across every LTX2.3 Oasis node and do not affect Image Oasis or Audio Oasis. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>
       `);
       const helpSection = () => sec("help","Help", `
         <div class="io-help-body">${IO_HELP_HTML || '<div class="io-mini" style="opacity:.7">Loading help\u2026</div>'}</div>
@@ -1803,51 +1837,21 @@ app.registerExtension({
         }, { once: true });
       });
 
-      // ── Continue-from-viewed: extract + upload the current entry's last
-      // frame so the backend uses it as the tail source on the next run.
-      // Uses a throwaway <video> so playback of the visible <video> isn't
-      // disturbed. Same pattern as makePoster above; seek to (duration -
-      // 1/fps) so we land on the final frame rather than past the end.
-      const extractLastFrame = (entry) => new Promise((resolve, reject) => {
-        const v = document.createElement("video");
-        let done = false;
-        const cleanup = () => {
-          try { v.removeAttribute("src"); v.load(); } catch { /* jsdom */ }
-        };
-        const finish = (result) => { if (done) return; done = true; cleanup(); resolve(result); };
-        const fail = (err) => { if (done) return; done = true; cleanup(); reject(err); };
-        const hardT = setTimeout(() => fail(new Error("tail extract timeout")), 30000);
-        v.muted = true; v.preload = "auto"; v.src = viewURL(entry);
-        v.addEventListener("error", () => { clearTimeout(hardT); fail(new Error("tail source load error")); });
-        v.addEventListener("loadedmetadata", () => {
-          try {
-            const fps = entry.fps || v.fps || 24;
-            const end = Math.max(0, (v.duration || 0) - (1 / fps));
-            v.currentTime = end;
-          } catch (e) { clearTimeout(hardT); fail(e); }
+      // ── Continue-from-viewed: register the current entry as tail source
+      // The backend decodes the tail off disk at generate time, so all the
+      // browser has to send is which clip it is. No <video> seek, no canvas
+      // round-trip, and the motion-context window can be any length.
+      const _uploadTail = async (entry) => {
+        const r = await api.fetchApi("/ltx23_oasis/set_tail", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            io_id: ensureIoId(),
+            video: entry.filename,
+            subfolder: entry.subfolder || "",
+            type: entry.type || "temp",
+          }),
         });
-        v.addEventListener("seeked", () => {
-          try {
-            if (!v.videoWidth) { clearTimeout(hardT); return fail(new Error("no video dimensions")); }
-            const c = document.createElement("canvas");
-            c.width = v.videoWidth; c.height = v.videoHeight;
-            c.getContext("2d").drawImage(v, 0, 0);
-            c.toBlob((blob) => {
-              clearTimeout(hardT);
-              if (!blob) return fail(new Error("canvas encode failed"));
-              finish(blob);
-            }, "image/png");
-          } catch (e) { clearTimeout(hardT); fail(e); }
-        }, { once: true });
-      });
-
-      const _uploadTail = async (blob) => {
-        const fd = new FormData();
-        fd.append("io_id", ensureIoId());
-        fd.append("image", blob, "tail.png");
-        // FormData: never set Content-Type manually — the browser sets it
-        // with the multipart boundary. api.fetchApi respects an omitted CT.
-        const r = await api.fetchApi("/ltx23_oasis/set_tail", { method: "POST", body: fd });
         if (!r.ok) throw new Error(`set_tail HTTP ${r.status}`);
         return r.json();
       };
@@ -1859,11 +1863,7 @@ app.registerExtension({
       let _tailInFlight = null;
       const _tailFire = async (entry) => {
         try {
-          const blob = await extractLastFrame(entry);
-          // Guard against a stale in-flight fire: if the user has since
-          // clicked something else, don't clobber the newer tail with ours.
-          if (entry !== history[activeIdx]) return;
-          await _uploadTail(blob);
+          await _uploadTail(entry);
           if (entry === history[activeIdx]) tailSourceEntry = entry;
         } catch (e) {
           console.debug("[LTX Oasis] tail sync failed:", e && e.message || e);
@@ -2112,13 +2112,12 @@ app.registerExtension({
         }
         makeThumb(entry);
         historyEl.scrollLeft = historyEl.scrollWidth;
-        // Fresh generation: the server just wrote the exact tail tensor
-        // for this entry into _LAST_FRAME[io_id]. Cancel any stale debounce
-        // and mark this entry as the tail source so the scheduleSetTail
-        // inside loadEntry no-ops instead of round-tripping through the
-        // browser and degrading fidelity.
+        // Fresh generation: the server keeps no pixels of its own any more,
+        // so this entry has to be registered like any other. Cancel any
+        // stale debounce first; loadEntry's scheduleSetTail then registers
+        // this one.
         cancelPendingTailSync();
-        tailSourceEntry = entry;
+        tailSourceEntry = null;
         loadEntry(history.length - 1, { autoplay: true });
       };
       const addResults = (results) => { for (const info of results) addEntry(info); };
@@ -2165,10 +2164,8 @@ app.registerExtension({
           }
           makeThumb(entry);
           historyEl.scrollLeft = historyEl.scrollWidth;
-          // Do NOT set tailSourceEntry here — unlike a fresh generation
-          // (server has the exact tail tensor), for an external file the
-          // server has no tail for this content yet. The scheduleSetTail
-          // inside loadEntry will fire and upload its last frame.
+          // The scheduleSetTail inside loadEntry registers this entry with
+          // the backend; external files are no different from fresh ones.
           loadEntry(history.length - 1, { autoplay: true });
           showToast(`Loaded ${item.filename}`);
         } catch (e) {
@@ -2435,6 +2432,16 @@ app.registerExtension({
           });
           const data = await r.json();
           if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+          // Land the finished movie in the scene bar, same as Clip does. It
+          // is NOT excluded from the next Create Movie: concatenating a movie
+          // with more clips is a deliberate workflow for runs longer than the
+          // bar holds. Prune what you don't want with the thumb's X first.
+          if (data.filename) {
+            await loadExternalVideo({
+              filename: data.filename,
+              subfolder: data.subfolder || "",
+            });
+          }
           const parts = [`Movie \u2192 output/${data.path}`];
           if (data.size_bytes) parts.push(fmtSize(data.size_bytes));
           if (data.duration_s) parts.push(`${data.duration_s.toFixed(1)}s`);
@@ -2691,6 +2698,11 @@ app.registerExtension({
           row.addEventListener("dragover",e=>{e.preventDefault();});
           row.addEventListener("drop",async e=>{
             e.preventDefault(); e.stopPropagation();
+            // Audio Oasis segment chip, dragged in-app (no File object --
+            // just the already-uploaded qualified filename). Same MIME
+            // convention as the x-oasis-frame image-drag payload.
+            const oasisAudio = (e.dataTransfer?.getData("application/x-oasis-audio") || "").trim();
+            if(oasisAudio){ st.audio_file = oasisAudio; render(); return; }
             const f = e.dataTransfer?.files?.[0];
             if(!f || !(f.type.startsWith("audio/") || /\.(mp3|wav|flac|ogg|m4a)$/i.test(f.name))) return;
             try{ st.audio_file = await uploadImageBlob(f, f.name); render(); }
@@ -2711,6 +2723,7 @@ app.registerExtension({
           const handler=()=>{
             let v=el.value;
             if(el.type==="number"){v=parseFloat(v); if(isNaN(v))v=0;}
+            if(f==="context_frames"){v=parseInt(v,10); if(isNaN(v))v=0;}
             st[f]=v;
             save();
             if(f==="architecture"){ applyArchChange(v); render(); }

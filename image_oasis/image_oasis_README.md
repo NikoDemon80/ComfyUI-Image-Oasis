@@ -408,7 +408,7 @@ toolkit-specific.
   ```
   pip install llama-cpp-python                          # CPU only
   # CUDA wheels: use the abetlen llama-cpp-python wheel index for your toolkit
-  # (cu121 / cu122 / cu124 / etc.) -- see that project's install docs.
+  # (cu121 / cu122 / cu124 / etc.) - see that project's install docs.
   ```
 
   PyPI's stock wheel is CPU-only. The abetlen wheel index has CUDA-built wheels
@@ -455,7 +455,7 @@ defaults from the registry.
 `clip_slots` to 1, 2, or 3 to declare its CLIP arity).
 * Preset state preserves CLIP slot 2 and 3 values across arch switches -
 swap from SD3 to Qwen and back and your three SD3 CLIPs are still in
-place. `nodes.py` trims unused slots before the load call, so a 1-slot
+place. `nodes_image.py` trims unused slots before the load call, so a 1-slot
 arch never accidentally triggers a triple-CLIP load with stale state.
 
 ## Credits

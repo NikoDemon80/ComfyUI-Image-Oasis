@@ -19,10 +19,10 @@ def _load(mod_name):
     return module
 
 
-_nodes = _load("nodes")
+_nodes = _load("nodes_image")
 
 try:
-    _load("routes")
+    _load("routes_image")
 except Exception as _e:
     print(f"[Image Oasis] route registration skipped: {_e}")
 try:

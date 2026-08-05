@@ -1,5 +1,5 @@
 """
-Video Oasis Viewer — a preview-first Save Video node for ComfyUI.
+Video Oasis Viewer -- a preview-first Save Video node for ComfyUI.
 
 Renders the incoming VIDEO to the *temp* directory and shows it in a rich
 in-node viewer (scrub, frame-step, loop/cycle, clip, create-movie, lightbox,
@@ -137,14 +137,14 @@ def _encode_with_pyav(video, path, container_fmt, codec, crf, metadata):
         # ---- video ----
         # Surface corruption BEFORE clamping it away (same rationale as the
         # Image Oasis preview: nan_to_num keeps the encode from producing
-        # garbage bytes, but silently masking NaN/Inf hides upstream bugs —
+        # garbage bytes, but silently masking NaN/Inf hides upstream bugs --
         # e.g. an incompatible attention backend producing NaN latents shows
         # up only as a black video).
         nan_warning = None
         for frame in images:
             img = frame[..., :3].float().cpu().numpy()
             if nan_warning is None and not np.isfinite(img).all():
-                nan_warning = ("NaN/Inf values in decoded frames — the latents were "
+                nan_warning = ("NaN/Inf values in decoded frames -- the latents were "
                                "corrupted upstream (check for an incompatible attention "
                                "backend, e.g. --use-sage-attention). Values were clamped "
                                "for preview; this video is not trustworthy.")
@@ -220,7 +220,7 @@ def _probe(path):
 # --------------------------------------------------------------------------
 
 class VideoOasisPreview:
-    """Video Oasis Viewer — encodes to temp, full scene-bar player, saves on demand."""
+    """Video Oasis Viewer -- encodes to temp, full scene-bar player, saves on demand."""
 
     def __init__(self):
         self.temp_dir = folder_paths.get_temp_directory()
@@ -329,7 +329,7 @@ class VideoOasisPreview:
         # Results are delivered ONLY by stable io_id over the dedicated WS
         # event (the ui["..."] payload routes by raw numeric node id against
         # the active graph and misdelivers to same-id nodes on other
-        # workflows — same fix as Image Oasis). No io_id means the frontend
+        # workflows -- same fix as Image Oasis). No io_id means the frontend
         # widget never ran; there is nothing listening, so just log it.
         if io_id:
             try:
@@ -380,7 +380,7 @@ try:
                 src_subfolder = str(item.get("subfolder", ""))
                 src_type = str(item.get("type", "temp") or "temp").strip().lower()
                 # Containment check: filename/subfolder come from the client,
-                # and this server has no auth — without it, `..` or an
+                # and this server has no auth -- without it, `..` or an
                 # absolute path could copy ANY readable file on disk into
                 # the output folder. type=output allows "save another copy"
                 # of a scene-bar entry that already lives under output/.

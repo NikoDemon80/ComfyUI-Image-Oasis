@@ -4,6 +4,7 @@
   "universal": [
     {"op": "regex_sub", "pattern": "(?s)<think>.*?</think>", "replace": ""},
     {"op": "regex_sub", "pattern": "(?s)^.*?</think>\\s*",   "replace": ""},
+    {"op": "regex_sub", "pattern": "(?is)<\\|begin[ _]of[ _]thinking\\|>.*?<\\|end[ _]of[ _]thinking\\|>", "replace": ""},
     {"op": "regex_sub", "pattern": "\\[/?(?:INST|OUT)\\]|<</?SYS>>", "replace": ""},
     {"op": "strip"}
   ],

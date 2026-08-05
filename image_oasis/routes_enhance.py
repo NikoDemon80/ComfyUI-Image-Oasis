@@ -267,6 +267,7 @@ PROFILES_FILE = os.path.join(os.path.dirname(__file__), "profiles.json")
 _FALLBACK_UNIVERSAL = [
     {"op": "regex_sub", "pattern": r"(?s)<think>.*?</think>", "replace": ""},
     {"op": "regex_sub", "pattern": r"(?s)^.*?</think>\s*",   "replace": ""},
+    {"op": "regex_sub", "pattern": r"(?is)<\|begin[ _]of[ _]thinking\|>.*?<\|end[ _]of[ _]thinking\|>", "replace": ""},
     {"op": "regex_sub", "pattern": r"\[/?(?:INST|OUT)\]|<</?SYS>>", "replace": ""},
     {"op": "strip"},
 ]
@@ -385,7 +386,7 @@ _DEFAULT_MAX_TOKENS = 2048
 # model+ctx is already loaded, it already fits, so reuse it rather than
 # reloading because the free-VRAM math produced a slightly different split.)
 # The LLM stays loaded between clicks; it's only unloaded by
-# unload_enhancer() (called from nodes.py at the start of image generation).
+# unload_enhancer() (called from nodes_image.py at the start of image generation).
 _STATE = {"model": None, "path": None, "n_gpu_layers": None, "n_ctx": None}
 
 # Serializes enhance work. The wand button guards per-node (wandBusy), but two
@@ -414,7 +415,7 @@ def _unload():
 
 
 def unload_enhancer():
-    """Public entry: free the cached LLM if one is loaded. Called from nodes.py
+    """Public entry: free the cached LLM if one is loaded. Called from nodes_image.py
     at the top of image generation so the LLM never competes with the diffusion
     model for VRAM. No-op when no LLM is loaded. Takes the enhance lock so a
     generation that starts during an in-flight enhance waits for it to finish

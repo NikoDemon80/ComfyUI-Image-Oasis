@@ -1,5 +1,135 @@
 # Changelog
 
+## v1.6.0
+
+Motion context for chained LTX clips, plus a fourth node. Class ids stay
+stable: `ImageOasis`, `VideoOasisPreview`, `LTX23Oasis`. New: `AudioOasis`.
+
+### LTX2.3 Oasis
+
+#### Added
+- **Motion context** for *Continue from viewed video*: a window of the previous
+  clip (9 / 17 / 25 / 33 / 41 / 49 frames - 25 is one second at 25fps, 49 is
+  just under two) is encoded and frozen at the head of the timeline, then
+  cropped before decode. A single frame carries pose but no motion, so chained
+  clips used to re-invent direction and speed at every join; with real frames
+  the model reads camera drift, travel direction and gait phase straight out of
+  them. Selector appears under the Continue checkbox; **Last frame only** keeps
+  the pre-1.6 behaviour.
+- Generate-mode audio continuity: the previous clip's tail audio is frozen
+  alongside the video context, so ambient beds, music and transient events
+  (footfalls) carry across a cut instead of restarting.
+- `stage_context_video.py`: viewer-entry resolution and PyAV tail decode
+  (frames + audio), plus `context_span_px`, the single definition of how many
+  pixel frames a latent context window occupies.
+
+#### Changed
+- **Tail source is now the file in the viewer, not an in-memory tensor.**
+  `_LAST_FRAME` (IMAGE tensor per io_id) is replaced by `_TAIL_SRC`, a
+  `{video, subfolder, type}` reference; frames are decoded off disk at generate
+  time. Clips loaded from `output/` now chain identically to fresh renders, and
+  nothing large is pinned per io_id.
+- `POST /ltx23_oasis/set_tail` takes a JSON entry descriptor instead of a
+  multipart PNG upload. The frontend no longer spins up a throwaway `<video>`
+  to seek and canvas-encode the last frame.
+- Beat guides and PromptRelay beats are laid out against the padded timeline,
+  so guide indices and beat boundaries still land on the delivered frames they
+  were written for.
+- Context frames are resized to the render resolution before encoding, so a
+  viewer entry at a different resolution or aspect chains cleanly.
+
+#### Fixed
+- `build_mux_audio` compares the uploaded track against the delivered frame
+  count, not the sampled length. Sampling extra frames in front would otherwise
+  have made every file-driven track look short and had a decoded generated tail
+  appended to it.
+- Context frames are cropped in **pixel** space after decode, never by slicing
+  latent frames off the head. LTX's first latent frame decodes to one pixel
+  frame and each later one to eight, so cropping the latent promotes a delta
+  frame into the anchor position - the decoder renders a whole quantum of
+  motion into a single frame and takes a few more to settle, visible as a
+  shimmy at every scene join.
+- The front cut is the context *span* (`8n+1`), not the sampled overhead
+  (`8n`). The two differ by a constant 7 frames of real content; trimming the
+  overhead made each clip start 7 frames late, visible as a jump ahead at the
+  join. The surplus now comes off the back.
+
+#### Notes
+- Motion context costs sampling time proportional to the window (a 25-frame
+  window on a 121-frame render samples 153) and nothing else. Delivered frame
+  counts, audio length and audio sync are unchanged.
+- The context window is trimmed after the spatial upsampler rather than before,
+  because cropping earlier reintroduces the re-anchoring artifact. With
+  **Spatial Upsample** enabled those frames cost extra upscale/polish work.
+- Legacy saved values from testing builds (8 / 24 / 32) snap down to the
+  nearest legal window (off / 17 / 25).
+
+---
+
+### Video Oasis Viewer
+
+#### Changed
+- **Scene bar holds 48 clips**, up from 24 in v1.5 (`HISTORY_CAP`). LTX2.3
+  Oasis's bar shares the constant and gets the same capacity. Existing
+  histories are unaffected; the bar simply stops pruning as early.
+
+---
+
+### Audio Oasis (new node)
+
+Waveform chopper and segment saver (`AudioOasis`). Loads an mp3/wav/flac/m4a,
+cuts it into segments on a waveform, saves them in numbered order, and hands
+the selected clip to the graph as a normal `AUDIO` output.
+
+#### Added
+- **Browser-side decode.** Waveform, duration, sample rate, channel count and
+  peak/RMS levels appear on upload with no server round trip.
+- **Chop points**: click the waveform to drop one, drag to slide, double-click
+  or right-click to remove. **split every N s** bulk-places evenly spaced
+  points that you can still edit freely afterward.
+- **Grid & Snap**: FPS plus three snap modes - **8n+1 (LTX)** (default),
+  **frames**, and **off** - with **Re-snap** to re-quantize existing points
+  after a mode or FPS change. Each segment row shows its frame count and flags
+  any length LTX would reject.
+- **Analysis**: BPM and estimated musical key via `librosa` (optional
+  dependency; every other feature works without it, and the Analyze button
+  returns a clear message when it is missing).
+- **Save segments** writes `<track>_seg001.<ext>`, `<track>_seg002.<ext>`, ...
+  under `input/audio_oasis/<track>/` in the source file's own format,
+  re-encoded rather than bitstream-copied so cuts land sample-accurate instead
+  of on the nearest frame boundary (~20-30ms off).
+- **Load saved set** restores track, chop points, FPS and segment list from a
+  set's `manifest.json`. Saved sets live on disk, so they survive ComfyUI
+  restarts even if the workflow was never saved. If the source file is gone,
+  segments stay selectable and draggable; only waveform and preview are lost.
+- **Segment drag-out**: drag a saved segment's grip onto LTX2.3 Oasis's audio
+  slot to use it as that node's audio-driven-video input, no upload and no
+  wire. Same socketless pattern as the rest of the suite.
+- **Use full track as output** toggles whether the `AUDIO` socket carries the
+  whole track or a single selected segment.
+- Independent theme system scoped to `.ao-widget`, with its own active palette
+  and named-palette library under `user/audio_oasis/`. Image Oasis, LTX2.3
+  Oasis and Audio Oasis can show three different palettes at once.
+- In-node **Help** from `audio_oasis_help_content.md`.
+- HTTP routes under `/audio_oasis/*` (analyze, save_segments, saved_tracks,
+  load_manifest, help, theme, themes, save_named_theme, delete).
+- `librosa` listed commented-out in `requirements.txt`, alongside
+  `llama-cpp-python`, as an opt-in dependency.
+
+#### Notes
+- Layout follows the suite standard: full-width waveform strip on top, then the
+  IO/LTXO two-column body with **Segments** in the right output pane and a
+  **Bypass Node** button under the left column.
+- `IS_CHANGED` keys on the selected file's mtime and size, not just its name.
+  Re-saving segments that produce a byte-different file under the same name
+  would otherwise serve ComfyUI's cached `AUDIO` from the previous run.
+- Supported formats: mp3, wav, flac, m4a/aac. Segments save in whichever of
+  these the source already is.
+- The first Analyze after a restart takes 10-30 seconds. That is librosa and
+  numba warming up their JIT, not a per-call cost.
+
+---
+
 ## v1.5.0
 
 Oasis Suite release. Two previously unreleased nodes ship in this pack for the
@@ -45,7 +175,7 @@ nothing hits `output/` until Save.
 - **Scene bar** (up to 24): recall, delete, long-press reorder, **+** load from
   `output/`, **Save** (lossless copy + workflow metadata),
   saved ✓ badge; history survives tab switches and reloads.
-- **Clip**: mark in `[` / out `]` then Clip -- trimmed file lands in the bar.
+- **Clip**: mark in `[` / out `]` then Clip - trimmed file lands in the bar.
 - **Create Movie**: concat every *saved* bar clip; stream-copy when codec +
   extradata match, otherwise re-encode; audio toggle with silence padding.
 - Encode UI: container / codec / quality (or custom CRF) / save prefix.
@@ -95,7 +225,7 @@ Video Oasis Viewer path.
 - **Continue from viewed video**: next run starts from the last frame of
   whatever is in the viewer (scene-bar click changes the chain source).
 - **Audio** modes under Video / Audio: Off / Generate / **File** (audio-driven
-  video -- encode real audio into the latent, mux original waveform back).
+  video - encode real audio into the latent, mux original waveform back).
 - Distilled **sigma schedule** editor with ↺ reset (Generation + Upscale
   polish sigmas).
 - **Negative prompt** restored: CFG > 1 uses standard CFG; CFG 1 routes
@@ -115,7 +245,7 @@ Video Oasis Viewer path.
 - `LTXVCropGuides` / guide-crop call signature mismatch on newer ComfyUI.
 - Audio-driven File mode drift over long clips (PTS / mux alignment); original
   waveform mux keeps lip-sync with frames.
-- Scene bar vanished on ComfyUI tab switch -- widget now persists full history
+- Scene bar vanished on ComfyUI tab switch - widget now persists full history
   (parity with Video Oasis Viewer); temps still prune after restart.
 - Create Movie corruption when joining Clip outputs (shared fix with Viewer).
 - Frame drag onto stock ComfyUI image nodes (shared fix with Viewer).
@@ -132,7 +262,7 @@ Video Oasis Viewer path.
 
 #### Added
 - History strip under the viewer (save, load-from-output, nav; image-appropriate
-  subset of the video scene-bar toolkit -- no reorder).
+  subset of the video scene-bar toolkit - no reorder).
 - Bypass Node / Activate Node footer (fixed under the left column; same
   mode-4 behavior as rgthree Fast Groups Bypasser).
 - Per-LoRA **CivitAI** button under strength (by-file-hash → direct model page,

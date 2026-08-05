@@ -1,6 +1,6 @@
-# Oasis Suite (Image Oasis v1.5)
+# Oasis Suite
 
-One ComfyUI pack with three nodes that share the same player language, save
+One ComfyUI pack with four nodes that share the same player language, save
 habits, and UI patterns. Install once; everything lands under
 `custom_nodes/ComfyUI-Image-Oasis/`.
 
@@ -9,9 +9,68 @@ habits, and UI patterns. Install once; everything lands under
 | **Image Oasis** | `ImageOasis` | `image_oasis/` | [image_oasis/image_oasis_README.md](image_oasis/image_oasis_README.md) |
 | **Video Oasis Viewer** | `VideoOasisPreview` | `video_oasis/` | [video_oasis/video_oasis_README.md](video_oasis/video_oasis_README.md) |
 | **LTX2.3 Oasis** | `LTX23Oasis` | `ltx23_oasis/` | [ltx23_oasis/ltx23_oasis_README.md](ltx23_oasis/ltx23_oasis_README.md) |
+| **Audio Oasis** | `AudioOasis` | `audio_oasis/` | [audio_oasis/audio_oasis_README.md](audio_oasis/audio_oasis_README.md) |
 
-Frontends live in `web/` (`image_oasis.js`, `videoOasis.js`, `ltx23Oasis.js`).
+Frontends live in `web/` (`image_oasis.js`, `video_oasis.js`, `ltx23_oasis.js`,
+`audio_oasis.js`).
 **License: GPL-3.0-or-later** for the whole pack (see [LICENSE](LICENSE)).
+
+---
+
+## What's new in 1.6
+
+### Motion context for chained clips (LTX2.3 Oasis)
+
+**Continue from viewed video** could only ever see one frame of the previous
+clip. A still carries pose but not motion - a leg mid-stride looks the same
+swinging forward or back, a camera frozen mid-pan gives no hint which way it
+was moving - so every join was a fresh guess and chained clips lurched.
+
+1.6 pins a window of the previous clip in front of the timeline as frozen
+frames (9 / 17 / 25 / 33 / 41 / 49; 25 is one second at 25fps, 49 is just under
+two). The model reads direction, speed, gait phase and camera drift out of them.
+The window is cropped after decode, delivered frame counts are unchanged, and
+audio is untouched - File mode pads the window with silence so an uploaded
+track is muxed exactly as supplied, Generate mode carries the previous clip's
+tail audio so ambient beds and music continue across the cut.
+
+The tail source is now read from the file in the viewer rather than an
+in-memory tensor, so clips loaded from `output/` chain exactly like fresh
+renders.
+
+### Audio Oasis (new node)
+
+A fourth node joins the suite. Load an mp3/wav/flac/m4a, chop it into segments
+on a waveform, save them as numbered files, and feed the result to LTX2.3
+Oasis's audio-driven-video slot or any other `AUDIO`-input node.
+
+- Waveform, duration, sample rate, channels and peak/RMS decode in the browser
+  on upload, no server round trip
+- Click to drop a chop point, drag to slide, double-click or right-click to
+  remove; **split every N s** bulk-places evenly spaced points you can still
+  edit afterward
+- **Grid & Snap** keeps cuts legal for LTX: snap modes **8n+1** (default),
+  **frames**, or **off**, with **Re-snap** after an FPS change. Every segment
+  row shows its frame count and flags any length LTX would reject
+- **Save segments** writes numbered files under `input/audio_oasis/<track>/` in
+  the source format, re-encoded so cuts land sample-accurate rather than on the
+  nearest frame boundary, plus a `manifest.json`
+- **Load saved set** restores track, points, FPS and segments from that
+  manifest, so a chop survives restarts even if the workflow was never saved
+- Drag a segment's grip straight onto LTX2.3 Oasis's audio slot, or pick a
+  segment (or **Use full track as output**) to set what the `AUDIO` socket
+  carries
+- **Analyze** gives BPM and estimated key via optional `librosa`
+- Its own theme, independent of Image Oasis and LTX2.3 Oasis
+
+Full detail:
+[audio_oasis/audio_oasis_README.md](audio_oasis/audio_oasis_README.md) (and the
+in-node Help pane, fed by `audio_oasis/audio_oasis_help_content.md`).
+
+### Video Oasis Viewer
+
+The scene bar holds **48** clips, up from 24. LTX2.3 Oasis's bar shares the
+constant and gets the same capacity.
 
 ---
 
@@ -26,12 +85,14 @@ A preview-first Save Video replacement. Incoming `VIDEO` encodes to temp and
 plays in-node; nothing hits your output folder until you press Save.
 
 - Scrub / frame-step / mute / speed / lightbox (scroll zoom, drag pan)
-- Frame drag onto other nodes' image inputs (Load Image, refs, LTX guides, …)
+- Frame drag onto other nodes' image inputs (Load Image, refs, LTX guides, ...)
 - Playback: **off → loop → cycle** (cycle walks the scene bar like a dailies reel)
-- **Scene bar** (up to 24): click to recall, delete, long-press reorder, **+**
-  load from `output/`, **Save** (lossless copy + workflow metadata)
-- **Clip**: mark in `[` / out `]` then Clip -- trimmed file lands in the bar
-- **Create Movie**: concat every *saved* bar clip (stream-copy when possible,
+- **Scene bar** (up to 24, raised to 48 in 1.6): click to recall, delete,
+  long-press reorder, **+** load from `output/`, **Save** (lossless copy +
+  workflow metadata)
+- **Clip**: mark in `[` / out `]` then Clip - trimmed file lands in the bar
+- **Create Movie**: concat every *saved* bar clip, result lands back in the bar
+  (stream-copy when possible,
   re-encode when Clip or mismatched params require it)
 - **Encode / Save** section (LTXO-matching): format / codec / quality / save prefix
 - Theme follows LTX2.3 Oasis (not Image Oasis)
@@ -40,9 +101,9 @@ Full detail: [video_oasis/video_oasis_README.md](video_oasis/video_oasis_README.
 
 ### LTX2.3 Oasis (new)
 
-All-in-one LTX 2.3 video generation in the Image Oasis UI shape -- model pick,
+All-in-one LTX 2.3 video generation in the Image Oasis UI shape - model pick,
 prompt enhancer, LoRA stack, Start Frame / Prompt Beats, audio modes, sigmas,
-spatial upsample -- with the same player, scene bar, Clip, Create Movie, and
+spatial upsample - with the same player, scene bar, Clip, Create Movie, and
 encode/save path as Video Oasis Viewer (uses the in-pack encode path; no
 extra video pack required).
 
@@ -57,7 +118,7 @@ Full detail: [ltx23_oasis/ltx23_oasis_README.md](ltx23_oasis/ltx23_oasis_README.
 ### Image Oasis (carried forward)
 
 Same all-in-one image node as 1.4.x, plus the recent history-strip / bypass /
-CivitAI-hash work. Architecture registry, enhancer, LoRAs, refiner, upscale --
+CivitAI-hash work. Architecture registry, enhancer, LoRAs, refiner, upscale -
 unchanged class id `ImageOasis`. See
 [image_oasis/image_oasis_README.md](image_oasis/image_oasis_README.md) for the
 full feature list and older "what's new" notes (v1.1-1.4).
@@ -78,20 +139,25 @@ full feature list and older "what's new" notes (v1.1-1.4).
    `ComfyUI/custom_nodes/ComfyUI-Image-Oasis/`.
 2. Install Python deps from the pack root:
    `pip install -r requirements.txt`
-3. Restart ComfyUI, then hard-refresh the browser (Ctrl+F5) so the three
-   frontend scripts reload.
+3. Restart ComfyUI, then hard-refresh the browser (Ctrl+F5) so the frontend
+   scripts reload.
 
 **Optional (Image Oasis / LTX enhancer):** `llama-cpp-python` with a CUDA/Metal
-build for the GGUF prompt enhancer -- see
+build for the GGUF prompt enhancer - see
 [image_oasis/image_oasis_README.md](image_oasis/image_oasis_README.md).
 
 **Optional (LTX):** `ComfyUI-GGUF` for GGUF diffusion; `ComfyUI-KJNodes` for
 LTX2 NAG when CFG is 1 and a negative prompt is set.
 
+**Optional (Audio Oasis):** `librosa` for BPM/key Analyze - listed commented-out
+in `requirements.txt` because it pulls in numba/llvmlite. Chop / save / drag all
+work without it.
+
 Presets / themes:
 
 - Image Oasis → `ComfyUI/user/image_oasis/`
 - LTX2.3 Oasis → `ComfyUI/user/ltx23_oasis/`
+- Audio Oasis → `ComfyUI/user/audio_oasis/`
 
 ---
 
@@ -100,8 +166,8 @@ Presets / themes:
 - Execution timer pattern adapted from crt-nodes.
 - Krea 2 conditioning rebalance: nova452 / huwhitememes (Apache-2.0).
 - LTX2.3 Oasis vendors PromptRelay / patches from WhatDreamsCost-ComfyUI
-  (LTX Director), GPL-3.0-or-later -- see `ltx23_oasis/vendor/`.
-- "Accessibility tool for the nodally challenged" -- PheebyKatz.
+  (LTX Director), GPL-3.0-or-later - see `ltx23_oasis/vendor/`.
+- "Accessibility tool for the nodally challenged" - PheebyKatz.
 
 ## License
 

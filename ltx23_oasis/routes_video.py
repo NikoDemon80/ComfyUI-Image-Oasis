@@ -261,62 +261,53 @@ async def vog_delete_named_theme(request):
     return web.json_response({"ok": True})
 
 
-# ── Continue-from-viewed: passive tail-frame override ───────────────────────
+# ── Continue-from-viewed: register the viewer's current entry ───────────
 #
-# The frontend extracts the last frame from whatever video is currently in
-# the viewer and POSTs it here. We decode into an IMAGE tensor with the same
-# shape convention nodes_video uses ([1, H, W, C], float32, 0..1) and drop
-# it straight into nodes_video._LAST_FRAME[io_id], bumping _TAIL_VER so the
+# The frontend POSTs a /view-style descriptor for whatever clip is in the
+# viewer; we record it against the io_id and bump _TAIL_VER so the
 # sampled-latent cache invalidates on the next run.
 #
-# Fidelity note: this replaces the exact tensor that nodes_video stores at
-# generation time with a browser-decoded PNG round-trip (codec → YUV→RGB →
-# 8-bit → PNG → tensor). For entries other than the just-generated one the
-# exact tensor is gone anyway (only one io_id slot). The frontend skips the
-# upload when the current viewer entry IS the one just generated, so the
-# common case doesn't degrade.
+# This is a reference, not pixels. The tail frames (and, for generated-audio
+# continuity, the tail waveform) are decoded off disk inside generate() by
+# stage_context_video, which means the motion-context window can be any size
+# without the browser having to seek and canvas-encode frame by frame, and
+# entries from earlier sessions work exactly like fresh ones.
 
 @routes.post("/ltx23_oasis/set_tail")
 async def vog_set_tail(request):
     try:
-        reader = await request.multipart()
+        body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Expected multipart/form-data."}, status=400)
-    io_id = ""
-    image_bytes = None
-    async for part in reader:
-        if part.name == "io_id":
-            io_id = (await part.text()).strip()
-        elif part.name == "image":
-            image_bytes = await part.read()
+        return web.json_response({"error": "Expected a JSON body."}, status=400)
+
+    io_id = str(body.get("io_id") or "").strip()
+    video = str(body.get("video") or body.get("filename") or "").strip()
     if not io_id:
         return web.json_response({"error": "Missing io_id."}, status=400)
-    if not image_bytes:
-        return web.json_response({"error": "Missing image."}, status=400)
-    try:
-        import io as _io
-        import numpy as _np
-        import torch as _torch
-        from PIL import Image as _PILImage
-        with _PILImage.open(_io.BytesIO(image_bytes)) as im:
-            im = im.convert("RGB")
-            arr = _np.asarray(im, dtype=_np.float32) / 255.0
-        tensor = _torch.from_numpy(arr).unsqueeze(0)   # [1, H, W, C]
-    except Exception as e:
+    if not video:
+        return web.json_response({"error": "Missing video."}, status=400)
+    subfolder = str(body.get("subfolder") or "").strip()
+    type_ = str(body.get("type") or "temp").strip()
+
+    from . import stage_context_video as sctx
+    if not sctx.resolve_entry_path(video, subfolder, type_):
+        shown = f"{subfolder}/{video}" if subfolder else video
         return web.json_response(
-            {"error": f"Could not decode image: {e}"}, status=400)
+            {"error": f"Missing on disk: {shown}"}, status=404)
+
     try:
         from . import nodes_video
-        nodes_video._LAST_FRAME[io_id] = tensor
+        nodes_video._TAIL_SRC[io_id] = {"video": video,
+                                        "subfolder": subfolder,
+                                        "type": type_}
         nodes_video._TAIL_VER[io_id] = nodes_video._TAIL_VER.get(io_id, 0) + 1
     except Exception as e:
         return web.json_response(
-            {"error": f"Could not store tail: {e}"}, status=500)
+            {"error": f"Could not store tail source: {e}"}, status=500)
+
     return web.json_response({
         "ok": True,
-        "width": int(tensor.shape[2]),
-        "height": int(tensor.shape[1]),
+        "video": video,
         "tail_ver": int(nodes_video._TAIL_VER[io_id]),
     })
 
@@ -595,7 +586,6 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
                 path = probe["path"]
                 with av.open(path) as in_c:
                     v_in = next(s for s in in_c.streams if s.type == "video")
-                    a_in = next((s for s in in_c.streams if s.type == "audio"), None)
 
                     first_pts = None
                     last_end = 0
@@ -615,22 +605,30 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
                         out.mux(packet)
                     v_pts_offset = last_end if last_end > 0 else v_pts_offset
 
-                    if a_out is not None:
-                        if a_in is not None:
+                # Audio needs its own container handle: the demux loop above
+                # runs `in_c` to EOF and PyAV does not rewind, so decoding
+                # audio from that same handle yields zero frames -- an aac
+                # stream is declared, never fed, and the movie is silent.
+                # _reencode_concat already opens a second handle for this
+                # reason; the stream-copy path did not.
+                if a_out is not None:
+                    if probe["has_audio"]:
+                        with av.open(path) as in_a:
+                            a_in = next(s for s in in_a.streams if s.type == "audio")
                             resampler = av.AudioResampler(
                                 format="fltp",
                                 layout=out_audio_params["layout"],
                                 rate=out_audio_params["rate"],
                             )
-                            for frame in in_c.decode(a_in):
+                            for frame in in_a.decode(a_in):
                                 for out_frame in (resampler.resample(frame) or []):
                                     out_frame.pts = a_pts
                                     a_pts += out_frame.samples
                                     for pkt in a_out.encode(out_frame):
                                         out.mux(pkt)
-                        else:
-                            a_pts = _emit_silence(
-                                out, a_out, probe["duration_s"], a_pts)
+                    else:
+                        a_pts = _emit_silence(
+                            out, a_out, probe["duration_s"], a_pts)
 
             if a_out is not None:
                 for pkt in a_out.encode(None):
@@ -800,9 +798,15 @@ async def vog_create_movie(request):
         return web.json_response(
             {"error": f"Concat failed: {e}"}, status=500)
 
+    # filename/subfolder are split out (not just the joined rel_path) so the
+    # frontend can hand the finished movie straight to loadExternalVideo and
+    # have it land in the scene bar, exactly the way Clip already does.
+    subfolder, _, filename = rel_path.rpartition("/")
     return web.json_response({
         "ok": True,
         "path": rel_path,
+        "filename": filename,
+        "subfolder": subfolder,
         "size_bytes": info["size_bytes"],
         "duration_s": info["duration_s"],
     })

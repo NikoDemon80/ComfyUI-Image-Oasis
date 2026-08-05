@@ -1,4 +1,4 @@
-// Image Oasis — full DOM-widget monolith UI
+// Image Oasis -- full DOM-widget monolith UI
 // Features: injectCSS guard, addDOMWidget with getValue/setValue JSON
 // serialization, onAdded init that fetches model lists, reactive model
 // dropdown, preset library, control-after-generate seed handling, and a
@@ -91,7 +91,7 @@ const CSS = `
 .io-chk-box.on{background:var(--io-accent-dim);border-color:var(--io-accent);}
 .io-half{display:flex;gap:8px;}
 /* min-width:0 lets columns holding <select>s shrink below their options'
-   intrinsic width — without it a long sampler name forces its column wider
+   intrinsic width -- without it a long sampler name forces its column wider
    than 50% while number-input columns (Steps/CFG) split evenly. */
 .io-half>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
 .io-mini{font-size:9px;color:var(--io-dim);font-family:var(--io-mono);letter-spacing:.04em;}
@@ -99,9 +99,9 @@ const CSS = `
 .io-body{display:flex;gap:9px;flex:1;min-height:0;overflow:hidden;}
 .io-col-left-wrap{display:flex;flex-direction:column;flex:0 0 360px;min-height:0;min-width:0;overflow:hidden;}
 .io-col-left{display:flex;flex-direction:column;gap:9px;overflow-y:auto;overflow-x:hidden;flex:1;min-height:0;min-width:0;}
-.io-col-left::-webkit-scrollbar{width:4px;}
-.io-col-left::-webkit-scrollbar-thumb{background:var(--io-bd);border-radius:2px;}
-.io-col-left::-webkit-scrollbar-thumb:hover{background:var(--io-bd);}
+.io-widget .io-col-left::-webkit-scrollbar{width:4px;}
+.io-widget .io-col-left::-webkit-scrollbar-thumb{background:var(--io-bd);border-radius:2px;}
+.io-widget .io-col-left::-webkit-scrollbar-thumb:hover{background:var(--io-bd);}
 .io-bypass-bar{flex:0 0 auto;padding-top:8px;margin-top:4px;border-top:1px solid var(--io-bd);}
 .io-bypass-btn{width:100%;box-sizing:border-box;height:30px;margin:0;border-radius:4px;border:1px solid var(--io-bd);background:#191919;color:#ddd;font-family:var(--io-mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;}
 .io-bypass-btn:hover{border-color:#777;color:#fff;}
@@ -116,7 +116,7 @@ const CSS = `
 .io-preview-scroll{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:9px;}
 .io-preview-img{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;border:1px solid var(--io-bd);}
 .io-preview-empty{color:var(--io-dim);font-family:var(--io-mono);font-size:10px;text-align:center;margin:auto;padding:20px;}
-/* ── Compare-slider (item 6) — vendored from Preview Architect ──
+/* ── Compare-slider (item 6) -- vendored from Preview Architect ──
    A = current image (in flow; defines container size; clipped from the right).
    B = compare source (previous batch or a ref image; absolute, fills container).
    Handle = white 2px vertical bar with circular knob; ::after widens the hit
@@ -137,8 +137,17 @@ const CSS = `
 .io-batch-arrow:hover{color:var(--io-accent);}
 /* History strip under the viewer (LTX Oasis scene-bar parity, images). */
 .io-history{display:flex;gap:5px;overflow-x:auto;padding:4px 9px 6px;min-height:58px;flex-shrink:0;border-top:1px solid var(--io-bd);}
-.io-history::-webkit-scrollbar{height:6px;}
-.io-history::-webkit-scrollbar-thumb{background:var(--io-bd);border-radius:3px;}
+/* Scoped one level deeper than the element's own class, and with an explicit
+   :hover twin. ComfyUI ships a global ::-webkit-scrollbar-thumb:hover rule;
+   the :hover pseudo-class raises its specificity to a dead tie with a
+   single-class rule of ours, and ties go to whichever stylesheet loaded last,
+   which is ComfyUI's. The thumb then repaints in the menu color on hover and
+   vanishes against the node body. The extra widget-class scope outranks it
+   outright; the :hover twin makes it explicit so the next stylesheet change
+   upstream can't quietly win it back. */
+.io-widget .io-history::-webkit-scrollbar{height:6px;}
+.io-widget .io-history::-webkit-scrollbar-thumb{background:var(--io-bd);border-radius:3px;}
+.io-widget .io-history::-webkit-scrollbar-thumb:hover{background:var(--io-bd);}
 .io-thumb{position:relative;flex:0 0 auto;width:88px;height:50px;border-radius:4px;border:2px dashed var(--io-go-bd);cursor:pointer;background:#000 center/cover no-repeat;box-sizing:border-box;transition:box-shadow .12s ease;}
 .io-thumb:hover{box-shadow:0 0 0 1px rgba(255,255,255,.18);}
 .io-thumb.io-saved{border-style:solid;}
@@ -201,7 +210,7 @@ const CSS = `
 .io-ref-size-btn{background:none;border:1px solid var(--io-border);border-radius:3px;color:inherit;font-size:10px;line-height:1;padding:1px 4px;cursor:pointer;}
 .io-ref-size-btn:hover{background:var(--io-accent);border-color:var(--io-accent);color:#fff;}
 /* Arch-inactive ref slot (Qwen slots on non-Qwen arch, Init slot on Qwen).
-   Still editable — state persists across arch switches like CLIP slots —
+   Still editable -- state persists across arch switches like CLIP slots --
    just visibly inert, matching the ignored-negative-prompt treatment. */
 .io-refslot.io-refslot-dim{opacity:.45;}
 .io-ref-thumb{width:44px;height:44px;border-radius:4px;border:1px solid var(--io-bd);object-fit:cover;background:#191919;flex-shrink:0;}
@@ -237,7 +246,7 @@ const CSS = `
 .io-swatch::-webkit-color-swatch-wrapper{padding:2px;}
 .io-swatch::-webkit-color-swatch{border:none;border-radius:2px;}
 .io-hex{flex:0 0 76px;font-family:var(--io-mono);text-transform:lowercase;}
-/* Execution timer — Orbitron readout that glows in the node accent while running.
+/* Execution timer -- Orbitron readout that glows in the node accent while running.
    Absolute-centered on the header so it sits at the true midpoint regardless of
    the (asymmetric) label and button widths on either side.
    Timer pattern + Orbitron readout adapted from crt-nodes. */
@@ -258,7 +267,7 @@ const CSS = `
 .io-lora-drag:active{cursor:grabbing;}
 .io-lora-drag-dot{width:3px;height:3px;border-radius:50%;background:var(--io-dim);}
 /* Drag source + drop position indicators. The shadow draws a thin accent line
-   above OR below the target depending on cursor half — standard list reorder UX. */
+   above OR below the target depending on cursor half -- standard list reorder UX. */
 .io-lora-row.io-lora-dragging{opacity:.35;}
 .io-lora-row.io-lora-drop-above{box-shadow:0 -2px 0 0 var(--io-accent);}
 .io-lora-row.io-lora-drop-below{box-shadow:0 2px 0 0 var(--io-accent);}
@@ -266,7 +275,7 @@ const CSS = `
 .io-lora-trigger-row .io-lora-trigger-spacer{flex:0 0 39px;}
 .io-lora-trigger-row input{flex:1;font-size:11px;padding:3px 5px;}
 /* Reference-image drop/paste target = the thumbnail box ONLY (not the whole
-   row — the upload button beside it is a click target, and a drop landing on
+   row -- the upload button beside it is a click target, and a drop landing on
    it shouldn't silently set the image). Drag-over and focus (click, then
    Ctrl+V pastes) share the same accent treatment so "this box will receive
    the image" reads identically for both input paths. */
@@ -417,7 +426,7 @@ function applyTheme(){
   // ALWAYS (re-)append: the override and the base CSS both declare :root
   // variables, so with equal specificity the LAST element in <head> wins.
   // Since the theme now loads at module scope, injectCSS (node creation)
-  // can land after it — appendChild moves an already-attached element to
+  // can land after it -- appendChild moves an already-attached element to
   // the end, so every apply re-asserts the override's winning position.
   document.head.appendChild(el);
   const decls = IO_THEME_VARS
@@ -462,7 +471,7 @@ async function loadTheme(){
 loadTheme();
 
 // Live-preview a theme change: paint :root and tell every open node to
-// repaint its editor swatches. Does NOT persist to disk — the user controls
+// repaint its editor swatches. Does NOT persist to disk -- the user controls
 // persistence via the explicit Save Theme button (or Reset, which commits a
 // reset-to-defaults). This lets the user experiment with colors freely.
 function refreshTheme(){
@@ -513,7 +522,7 @@ async function saveNamedTheme(name){
     });
     if(!r.ok) return false;
     await loadNamedThemes();
-    // Also persist as active — Save Theme means "this is what I'm using now".
+    // Also persist as active -- Save Theme means "this is what I'm using now".
     await saveTheme();
     IO_THEME_LISTENERS.forEach(fn=>{ try{fn();}catch{} });
     return true;
@@ -538,7 +547,7 @@ async function applyNamedTheme(id){
   await saveTheme();
 }
 
-// Escape user-controlled text for interpolation into the HTML templates —
+// Escape user-controlled text for interpolation into the HTML templates --
 // element content AND double-quoted attribute values. Filenames, preset/theme
 // names, and prompt text all flow through here; without it a value containing
 // `"` `<` or `&` breaks the markup (a preset name is stored DOM injection),
@@ -551,7 +560,7 @@ const esc = (s) => String(s ?? "")
 // applyArchs) so adding an arch is a registry-only change. The values below
 // are FALLBACKS, used only until the first models fetch succeeds (and kept if
 // it never does). If an arch looks missing or mislabeled, the registry is the
-// source of truth — not this block.
+// source of truth -- not this block.
 let ARCHS = ["auraflow","flux","krea2","qwen_image_edit","other","sd3"];
 // Arches whose reference-image path is the Qwen edit conditioning (mirrors
 // accepts_image_cond in registry.py). Slots 1-3 are live ONLY on these; the
@@ -570,13 +579,13 @@ const FIT_TIPS = {
 };
 let ARCH_LABELS = {auraflow:"AuraFlow / Z-Image",boogu:"Boogu-Image 0.1 (Base / Turbo)",flux:"Flux.1 / Flux.2",krea2:"Krea 2 (Turbo / Raw)",other:"SD1 / SD1.5 / No Patch",sd3:"SD3 / SD3.5",qwen_image_edit:"Qwen-Image-Edit"};
 // How many CLIP slots each arch exposes in the UI. Registry-fed like ARCHS
-// above (fallback values here); nodes.py trims at runtime so a 1-slot arch
+// above (fallback values here); nodes_image.py trims at runtime so a 1-slot arch
 // never loads with stale slot-2/3 values.
 let CLIP_SLOTS = {auraflow:1, boogu:1, flux:2, krea2:1, qwen_image_edit:1, other:2, sd3:3};
 const SOURCES = ["checkpoint","diffusion","gguf"];
 const SOURCE_LABELS = {checkpoint:"Checkpoint", diffusion:"Diffusion", gguf:"GGUF"};
 const WEIGHT_DTYPES = ["default","fp8_e4m3fn","fp8_e4m3fn_fast","fp8_e5m2"];
-// Registry-fed like the arch structures above (see applyArchs) — fallback
+// Registry-fed like the arch structures above (see applyArchs) -- fallback
 // values only. Add new CLIP types in registry.py's CLIP_TYPE_CHOICES.
 let CLIP_TYPES = ["","stable_diffusion","sd3","flux","qwen_image","lumina2","hidream","chroma","flux2","krea2","boogu"];
 const UPSCALE_MODES = ["algorithmic","model"];
@@ -588,7 +597,7 @@ const MAX_SEED = 1125899906842624;  // 2^50, matches ComfyUI's seed range
 // serialized widget state. The Python side sends generation results via a
 // custom "image-oasis/result" WebSocket event keyed by io_id, instead of
 // returning `{"ui": {"images": ...}}` (which would invoke ComfyUI's per-
-// numeric-id routing — the source of every cross-workflow collision bug).
+// numeric-id routing -- the source of every cross-workflow collision bug).
 //
 // The result either reaches a live closure handler immediately, or gets
 // stashed for the next mount to drain (tab-switch closure rebuild case).
@@ -629,7 +638,7 @@ app.registerExtension({
         return (n / (1024 * 1024)).toFixed(2) + " MB";
       };
       // Delegated handler for the ⤢ use-this-size button on ref info lines.
-      // Attached ONCE here — info divs get swapped in asynchronously after
+      // Attached ONCE here -- info divs get swapped in asynchronously after
       // fetches and would slip through the per-render bind() pass, and a
       // container-level listener survives every innerHTML render without
       // stacking. Copies the image's dimensions into the latent (snapped to
@@ -748,13 +757,13 @@ app.registerExtension({
       const modelSection = () => {
         const isCkpt = st.source_type==="checkpoint";
         // For checkpoints, CLIP/VAE may be baked in (auto-detected). The
-        // selectors disable and show "Baked in" — no manual tick boxes.
+        // selectors disable and show "Baked in" -- no manual tick boxes.
         const clipBaked = isCkpt && st.clip_bundled;
         const vaeBaked = isCkpt && st.vae_bundled;
         return sec("model","Model", `
           <div class="io-row">
             <span class="io-label">Arch</span>
-            <select class="io-select" data-f="architecture" title="Model family / architecture. Determines which sampler defaults and shift values are appropriate, which CLIP types are valid, and how the prompt is encoded. Set this to match your base model — wrong arch will produce broken outputs or a clear error.">${ARCHS.map(a=>`<option value="${a}"${a===st.architecture?" selected":""}>${ARCH_LABELS[a]}</option>`).join("")}</select>
+            <select class="io-select" data-f="architecture" title="Model family / architecture. Determines which sampler defaults and shift values are appropriate, which CLIP types are valid, and how the prompt is encoded. Set this to match your base model \u2014 wrong arch will produce broken outputs or a clear error.">${ARCHS.map(a=>`<option value="${a}"${a===st.architecture?" selected":""}>${ARCH_LABELS[a]}</option>`).join("")}</select>
           </div>
           <div class="io-row">
             <span class="io-label">Source</span>
@@ -828,7 +837,7 @@ app.registerExtension({
 
       // ── Ref image info (resolution + file size) ──
       // Fetched from /image_oasis/input_info per filename, cached for the
-      // node's lifetime (input files are immutable — a re-upload of the same
+      // node's lifetime (input files are immutable -- a re-upload of the same
       // name gets a new suffixed filename from ComfyUI, so stale entries
       // can't happen). Fetch completion does a targeted swap of the info div
       // rather than a full render, so it can never clobber mid-typing state.
@@ -869,14 +878,14 @@ app.registerExtension({
         const slot = (id, cmpIdx, dim) => {
           const fn = st[refKey(id)];
           // The thumb is the drop/paste target (data-ref-thumb + tabindex),
-          // deliberately NOT the whole row — see the CSS comment.
+          // deliberately NOT the whole row -- see the CSS comment.
           const tt = `title="Drop an image here, or click and paste (Ctrl+V)"`;
           const emptyLabel = id === "init" ? "Init" : id;
           const thumb = fn
             ? `<img class="io-ref-thumb" data-ref-thumb="${id}" tabindex="0" ${tt} src="${esc(imgURL({filename:fn,subfolder:"",type:"input"}))}"/>`
             : `<div class="io-ref-thumb-empty" data-ref-thumb="${id}" tabindex="0" ${tt}>${emptyLabel}</div>`;
           // Compare-source toggle (item 6): only meaningful when the slot has an
-          // image. Independent of the header Compare button — toggling a ref as
+          // image. Independent of the header Compare button -- toggling a ref as
           // source doesn't auto-activate the slider, and vice versa. The Init
           // slot participates as compare index 3.
           const cmpTog = fn
@@ -932,7 +941,7 @@ app.registerExtension({
         // Disabled while an enhance is in flight OR an image is generating
         // (the enhance would evict the diffusion model mid-run; backend
         // returns 409 for the same reason). Timer start/stop also toggles
-        // this directly via syncWandDisabled — no full render mid-run.
+        // this directly via syncWandDisabled -- no full render mid-run.
         const wandDisabled = wandBusy || timerRunning;
         const enhanceLabel = wandBusy ? "\u2026" : "\u2728 Enhance";
         return `
@@ -946,9 +955,9 @@ app.registerExtension({
           </div>`;
       };
       const promptSection = () => {
-        // Mirror the backend predicate in nodes.py: the negative is only ever
+        // Mirror the backend predicate in nodes_image.py: the negative is only ever
         // consumed by a pass with CFG > 1. If neither pass uses one, the
-        // negative is inert — we dim the textarea and show a note so the user
+        // negative is inert -- we dim the textarea and show a note so the user
         // knows. The textarea stays editable so they can stage a prompt for
         // later; the backend substitutes "" when neg_used is false, so edits
         // here don't bust the conditioning cache.
@@ -960,7 +969,7 @@ app.registerExtension({
         ${taBlock("positive","Enhanced prompt (drives generation)")}
         ${wandRow()}
         <div class="io-ta-wrap">
-          <textarea class="io-ta${negUsed?"":" io-ta-ignored"}" data-f="negative" placeholder="Negative prompt" style="height:${taHeights.negative||72}px" title="${negUsed?"":"Ignored — Negative Prompt uses CFG > 1. Increase CFG (or enable a refiner with CFG > 1) to use the negative prompt."}">${esc(st.negative)}</textarea>
+          <textarea class="io-ta${negUsed?"":" io-ta-ignored"}" data-f="negative" placeholder="Negative prompt" style="height:${taHeights.negative||72}px" title="${negUsed?"":"Ignored \u2014 Negative Prompt uses CFG > 1. Increase CFG (or enable a refiner with CFG > 1) to use the negative prompt."}">${esc(st.negative)}</textarea>
           <div class="io-ta-handle" data-ta-handle="negative"></div>
         </div>
         <div class="io-neg-ignored-note" data-neg-note style="display:${negUsed?"none":"block"}">Ignored \u2014 Negative Prompt uses CFG &gt; 1.</div>
@@ -1024,7 +1033,7 @@ app.registerExtension({
       // ── Latent section: canvas geometry + img2img init sizing ──
       // Ratio lock behavior: activating a ratio immediately snaps height from
       // the current width; while active, editing either field recalcs the
-      // other to the nearest /16 (VAE needs /8, DiT patchify needs /16 —
+      // other to the nearest /16 (VAE needs /8, DiT patchify needs /16 --
       // /16 is the universal safe snap; make_latent re-snaps as a backstop).
       // Re-clicking the active ratio returns to free mode. ↔ swaps values and,
       // in ratio mode, activates the mirrored ratio so the highlight stays
@@ -1037,7 +1046,7 @@ app.registerExtension({
       const latentSection = () => {
         const isQwen = IMAGE_COND_ARCHS.has(st.architecture);
         const initActive = !!st.init_image && !isQwen;
-        // Fit Method is always visible — it governs how images are conformed
+        // Fit Method is always visible -- it governs how images are conformed
         // to the latent size on BOTH paths: the Qwen edit references on the
         // Qwen arch, the img2img init image everywhere else. The context line
         // under it says which one applies right now, and doubles as the
@@ -1082,7 +1091,7 @@ app.registerExtension({
         </div>
         <div class="io-half">${num("steps","Steps",1,1,1000)}${num("cfg","CFG",0.1,0,100)}${num("variety","Variety",0.01,0,1,"Increases composition diversity between seeds. Distilled models (Z-Image Turbo, Krea 2 Turbo, Boogu Turbo, ...) often produce near-identical layouts across seeds; Variety adds tiny seeded noise to the prompt conditioning during the early sampling steps so each seed lands on a genuinely different composition, while prompt adherence and detail stay faithful. 0 = off (default). Start around 0.1. Same seed + same Variety reproduces the same image.")}</div>
         <div class="io-half">${selCol("sampler_name","Sampler",samplers)}${selCol("scheduler","Scheduler",schedulers)}</div>
-        <div class="io-half">${num("denoise","Denoise",0.01,0,1)}${num("shift","Shift (0=auto)",0.01,0,100,"Sigma shift for flow-matching schedulers. The right value depends on the model architecture — Flux typically uses ~1.0–3.5, SD3/3.5 uses ~3.0, AuraFlow uses ~3.0. 0 = use the architecture's default (recommended unless you know what you're doing). Higher values shift sampling toward later (more refined) noise levels.")}</div>
+        <div class="io-half">${num("denoise","Denoise",0.01,0,1)}${num("shift","Shift (0=auto)",0.01,0,100,"Sigma shift for flow-matching schedulers. The right value depends on the model architecture -- Flux typically uses ~1.0-3.5, SD3/3.5 uses ~3.0, AuraFlow uses ~3.0. 0 = use the architecture's default (recommended unless you know what you're doing). Higher values shift sampling toward later (more refined) noise levels.")}</div>
       `);
 
       const refinerSection = () => sec("refiner","Refiner Pass", `
@@ -1103,7 +1112,7 @@ app.registerExtension({
           :`<div class="io-row"><span class="io-label">Method</span><select class="io-select" data-f="upscale_method">${opt(UPSCALE_METHODS,st.upscale_method)}</select></div>`}`:""}
       `);
 
-      // Theme editor: one row per editable CSS variable — a native color picker,
+      // Theme editor: one row per editable CSS variable -- a native color picker,
       // a hex text field (type or pick), wired to the GLOBAL theme. Editing any
       // row re-themes every open node live (see saveTheme / IO_THEME_LISTENERS).
       const themeRow = (v) => {
@@ -1161,7 +1170,7 @@ app.registerExtension({
         <div class="io-row">
           <button class="io-btn" data-theme-reset style="margin-top:0;flex:1">Reset to default</button>
         </div>
-        <div class="io-mini" style="opacity:.7">Edits preview live across every Image Oasis node. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>
+        <div class="io-mini" style="opacity:.7">Image Oasis keeps its own palette. Edits preview live across every Image Oasis node and do not affect LTX2.3 Oasis or Audio Oasis. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>
       `);
 
       // Help section (item 2). Renders help_content.md fetched from the
@@ -1348,12 +1357,12 @@ app.registerExtension({
         // Randomize-seed + queue lives on the header so it's reachable without
         // keeping the Generation group open. Always present (incl. empty state)
         // so it can kick off the first generation. The play button beside it
-        // queues with the CURRENT seed (no randomize) — for re-running after a
+        // queues with the CURRENT seed (no randomize) -- for re-running after a
         // refiner/upscale toggle without changing the image's base.
         const goBtn = `<button class="io-icon-btn io-go io-hdr" data-seed-keep title="Generate (keep seed)">\u25b6</button>`;
         const diceBtn = `<button class="io-icon-btn io-dice io-hdr" data-seed-rand title="Randomize &amp; Generate">\u{1f3b2}</button>`;
         // Interrupt (item C): always in the DOM but display-toggled by the
-        // timer (startTimer/stopTimer flip it via syncWandDisabled — no full
+        // timer (startTimer/stopTimer flip it via syncWandDisabled -- no full
         // render mid-run). Click POSTs ComfyUI's stock /interrupt; the
         // existing execution_interrupted listener stops the timer.
         const stopBtn = `<button class="io-icon-btn io-hdr io-stop" data-interrupt title="Interrupt generation" style="display:${timerRunning?"inline-flex":"none"}">\u23f9</button>`;
@@ -1455,7 +1464,7 @@ app.registerExtension({
       };
       // Restore a timer that was RUNNING when the closure was torn down (tab
       // switch mid-generation). Whether the run is still live can't be known
-      // from the blob alone — a workflow saved mid-run and loaded tomorrow
+      // from the blob alone -- a workflow saved mid-run and loaded tomorrow
       // would resume a phantom clock forever. So ask the server: ComfyUI's
       // stock GET /prompt returns exec_info.queue_remaining (running +
       // pending). Busy -> resume ticking from the original start epoch (the
@@ -1482,7 +1491,7 @@ app.registerExtension({
         // Help body has its own scroll viewport (300 px, overflow-y:auto). It
         // gets destroyed and recreated on each render, so without this, any
         // toggle in another section yanks the user back to the top of the
-        // help text — annoying when reading along while configuring.
+        // help text -- annoying when reading along while configuring.
         const helpEl = container.querySelector(".io-help-body");
         const helpTop = helpEl ? helpEl.scrollTop : 0;
         const histEl = container.querySelector("[data-history]");
@@ -1545,7 +1554,7 @@ app.registerExtension({
         }));
         container.querySelectorAll("[data-chk]").forEach(el=>el.onclick=(e)=>{e.stopPropagation();const f=el.dataset.chk;st[f]=!st[f];save();render();});
         // Targeted (non-render) UI sync for the negative-prompt dimmed state.
-        // Must NOT call render() — cfg/refiner_cfg fire oninput on every
+        // Must NOT call render() -- cfg/refiner_cfg fire oninput on every
         // keystroke, and render() would replace the number input the user is
         // typing into. Toggling the class + note display is enough.
         const updateNegativeUi = () => {
@@ -1553,7 +1562,7 @@ app.registerExtension({
           const ta = container.querySelector('[data-f="negative"]');
           if(ta){
             ta.classList.toggle("io-ta-ignored", !negUsed);
-            ta.title = negUsed ? "" : "Ignored — Negative Prompt uses CFG > 1. Increase CFG (or enable a refiner with CFG > 1) to use the negative prompt.";
+            ta.title = negUsed ? "" : "Ignored \u2014 Negative Prompt uses CFG > 1. Increase CFG (or enable a refiner with CFG > 1) to use the negative prompt.";
           }
           const note = container.querySelector("[data-neg-note]");
           if(note) note.style.display = negUsed ? "none" : "block";
@@ -1571,7 +1580,7 @@ app.registerExtension({
             // DOM update (no full render) so number entry doesn't get clobbered.
             if(f==="cfg" || f==="refiner_cfg"){ updateNegativeUi(); }
             // Ratio lock: editing one dimension recalcs the other. Targeted
-            // update of the sibling input only — render() would clobber the
+            // update of the sibling input only -- render() would clobber the
             // field mid-typing (same rule as the cfg handler above).
             if(st.aspect_lock && (f==="width" || f==="height")){
               if(f==="width") applyRatioFromWidth(); else applyRatioFromHeight();
@@ -1641,7 +1650,7 @@ app.registerExtension({
         container.querySelectorAll("[data-ref-clear]").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();st[refKey(b.dataset.refClear)]="";render();}));
 
         // Reference THUMBNAILS are the drop/paste targets (not the whole slot
-        // row — the upload button is a click target, and a drop landing on it
+        // row -- the upload button is a click target, and a drop landing on it
         // must not silently set the image). preventDefault on dragover is what
         // lets `drop` fire at all; stopPropagation keeps ComfyUI's canvas-level
         // drop (loading a workflow from a dropped PNG) from hijacking it.
@@ -1666,7 +1675,7 @@ app.registerExtension({
           thumb.addEventListener("click",e=>e.stopPropagation());
         });
 
-        // LoRA stack — add/remove re-render; field edits mutate st in place
+        // LoRA stack -- add/remove re-render; field edits mutate st in place
         // (persistence is via getValue reading st live, like the [data-f] rows).
         container.querySelector("[data-lora-add]")?.addEventListener("click",e=>{
           e.stopPropagation();
@@ -1824,7 +1833,7 @@ app.registerExtension({
           await app.queuePrompt(0,1);
         }));
         // Generate-only: queue with the current seed, no randomize. No render
-        // either — nothing in `st` changed, so the DOM is already current.
+        // either -- nothing in `st` changed, so the DOM is already current.
         container.querySelectorAll("[data-seed-keep]").forEach(btn=>btn.addEventListener("click",async e=>{
           e.stopPropagation();
           await app.queuePrompt(0,1);
@@ -1832,7 +1841,7 @@ app.registerExtension({
         container.querySelector("[data-save-out]")?.addEventListener("click",e=>{e.stopPropagation();saveOutput();});
         // Interrupt: api.interrupt() where the frontend provides it, raw POST
         // to the stock route otherwise. Timer stop arrives via the existing
-        // execution_interrupted listener — nothing else to do here.
+        // execution_interrupted listener -- nothing else to do here.
         container.querySelector("[data-interrupt]")?.addEventListener("click",async e=>{
           e.stopPropagation();
           try{
@@ -1840,7 +1849,7 @@ app.registerExtension({
             else await fetch("/interrupt",{method:"POST"});
           }catch(err){ console.warn("[Image Oasis] interrupt failed",err); }
         });
-        // Compare toggle — header button flips compareOpen; the slider DOM
+        // Compare toggle -- header button flips compareOpen; the slider DOM
         // appears in renderPreview when a source (previous batch or ref slot)
         // is available.
         container.querySelector("[data-compare-tog]")?.addEventListener("click",e=>{e.stopPropagation();compareOpen=!compareOpen;render();});
@@ -1893,7 +1902,7 @@ app.registerExtension({
           else primaryImg.addEventListener("load",()=>buildMeta(primaryImg));
         }
 
-        // Prompt textarea drag-handles (custom resize — no native grip / scrollbar collision)
+        // Prompt textarea drag-handles (custom resize -- no native grip / scrollbar collision)
         container.querySelectorAll("[data-ta-handle]").forEach(h=>{
           h.addEventListener("pointerdown",e=>{
             e.preventDefault(); e.stopPropagation();
@@ -1918,7 +1927,7 @@ app.registerExtension({
           e.stopPropagation();const id=h.dataset.presetToggle;
           expandedPresets.has(id)?expandedPresets.delete(id):expandedPresets.add(id);
           // Populate the name field so a subsequent Save overwrites this preset.
-          // Unlike Load Preset, this does NOT touch st — the user keeps their
+          // Unlike Load Preset, this does NOT touch st -- the user keeps their
           // in-progress edits and can save them OVER an existing preset by
           // simply clicking the card and then Save.
           const p = presets.find(x=>x.id===id);
@@ -1983,7 +1992,7 @@ app.registerExtension({
             arr.splice(insertAt, 0, moved);
             presets = arr;
             render();
-            // Persist. Failure logs but doesn't roll back the UI — the user
+            // Persist. Failure logs but doesn't roll back the UI -- the user
             // can re-drag, and the next loadPresets() would refresh anyway.
             try{
               await fetch("/image_oasis/reorder_presets",{
@@ -2068,7 +2077,7 @@ app.registerExtension({
       // Upload a File/Blob into ComfyUI's input folder; returns the stored name
       // (subfolder-qualified). Shared by the file picker AND drag-drop, so a
       // dropped image becomes a plain input-folder file exactly like a picked
-      // one — same content-digest caching, same thumbnail path, no temp/output
+      // one -- same content-digest caching, same thumbnail path, no temp/output
       // annotation handling needed anywhere downstream.
       const uploadImageBlob = async (fileOrBlob, filename) => {
         const fname = filename || fileOrBlob.name || `dropped_${Date.now()}.png`;
@@ -2092,12 +2101,12 @@ app.registerExtension({
       };
 
       // Accept an image dropped onto reference slot `n`. Sources, in order:
-      //   1) real File(s)            — OS drag, or a panel exposing files
-      //   2) text/uri-list           — the well-formed URL drag (asset panel,<img>)
-      //   3) text/plain              — fallback URL
-      //   4) text/html src/href      — last-resort scrape from dropped markup
+      //   1) real File(s)            -- OS drag, or a panel exposing files
+      //   2) text/uri-list           -- the well-formed URL drag (asset panel,<img>)
+      //   3) text/plain              -- fallback URL
+      //   4) text/html src/href      -- last-resort scrape from dropped markup
       // A URL is fetched to a blob and re-uploaded (see uploadImageBlob). Works
-      // for ComfyUI's own /view URLs (input/temp/output) — including dragging
+      // for ComfyUI's own /view URLs (input/temp/output) -- including dragging
       // this node's own generated preview straight back into a ref slot.
       const acceptDrop = async (n, dt) => {
         if(!dt) return;
@@ -2117,7 +2126,7 @@ app.registerExtension({
             if(m) url = m[1];
           }
           if(!url) return;
-          // Filename-only leftovers from a broken drag payload — not a real source.
+          // Filename-only leftovers from a broken drag payload -- not a real source.
           if(!/^(data:|blob:|https?:|\/)/i.test(url)) return;
           const abs = url.startsWith("data:") || url.startsWith("blob:")
             ? url
@@ -2138,7 +2147,7 @@ app.registerExtension({
 
       // State lives in `st` / `open`. getValue() (on the DOM widget) reads them
       // live whenever ComfyUI serializes, so there is NO need to write the
-      // widget value manually — doing so would call setValue and re-render
+      // widget value manually -- doing so would call setValue and re-render
       // (the loop that froze the UI). save() is intentionally a no-op kept for
       // call-site clarity; persistence is automatic via getValue.
       const save = () => {};
@@ -2147,14 +2156,14 @@ app.registerExtension({
 
       // Fields a preset must NOT carry: the working prompt, the seed value, and
       // the reference images. These are per-session work, not part of a reusable
-      // "style/config" preset — loading a preset should never wipe the prompt you
+      // "style/config" preset -- loading a preset should never wipe the prompt you
       // are mid-edit on, reset your seed, or swap your reference images. Excluded
       // at BOTH save and load: save keeps stored presets clean; load protects the
       // current values (and shields against older presets that baked these in).
       // Excluded from presets, both on save AND on load (loadPreset filters
       // stored configs through this list too, so presets saved before an
       // exclusion was added can't reintroduce the field). Session work
-      // (prompts, seed, images) plus the entire Latent section — canvas
+      // (prompts, seed, images) plus the entire Latent section -- canvas
       // geometry belongs to the current task, not to a saved model setup.
       const PRESET_EXCLUDE = ["user_prompt", "positive", "negative", "seed",
                               "ref_image1", "ref_image2", "ref_image3",
@@ -2225,7 +2234,7 @@ app.registerExtension({
       // is only restored by setValue moments later). Registration and drain
       // therefore live in registerIoHandler(), called from BOTH onAdded
       // (fresh node, no saved value → setValue never fires) and the END of
-      // setValue (rebuild path — after preview state is restored, so the
+      // setValue (rebuild path -- after preview state is restored, so the
       // drain's snapshot-to-previous captures the old batch for compare).
       // registeredIoId tracks the key actually in IO_HANDLERS so a re-call
       // with a different ioId (onAdded minted one, setValue restored the
@@ -2406,11 +2415,11 @@ app.registerExtension({
         // every node add AND every tab-switch closure rebuild; fetching from
         // here made the recommendation a passive side effect of just looking
         // at the node. The fetch now runs only on a model change or on
-        // opening the Enhancer Settings panel (both side-effect-free — the
+        // opening the Enhancer Settings panel (both side-effect-free -- the
         // backend route no longer evicts).
       };
 
-      // GET /image_oasis/llm_recommended_layers — backend reads the GGUF header
+      // GET /image_oasis/llm_recommended_layers -- backend reads the GGUF header
       // and current free VRAM, returns {total, layers, all}. Pure read: no
       // eviction, so calling this can never disturb a loaded diffusion model.
       // The number is conservative while a diffusion model occupies VRAM; the
@@ -2443,12 +2452,12 @@ app.registerExtension({
 
       const runEnhance = async () => {
         if(wandBusy) return;
-        // Enhance is inoperative while an image is generating — loading the
+        // Enhance is inoperative while an image is generating -- loading the
         // LLM would evict the diffusion model mid-run. The backend enforces
         // this too (409); this guard just avoids the round trip.
         if(timerRunning){ alert("Enhance is unavailable while an image is generating."); return; }
         const cur = (st.user_prompt||"").trim();
-        if(!cur){ console.warn("[Image Oasis] nothing to enhance — User Prompt is empty"); return; }
+        if(!cur){ console.warn("[Image Oasis] nothing to enhance -- User Prompt is empty"); return; }
         if(!llmModel){ alert("Select an enhancer model (place .gguf files in models/LLM)."); return; }
         // Layers sent: Auto on -> the backend recomputes post-eviction (the
         // value here is just a fallback); Auto off -> the user's manual value.
@@ -2474,7 +2483,7 @@ app.registerExtension({
             // Surface the backend's clear message; leave the enhanced prompt untouched.
             alert("Enhance failed: " + (data.error || ("HTTP "+r.status)));
           } else if(data.enhanced){
-            // Re-clicks always overwrite the Enhanced Prompt — that's the
+            // Re-clicks always overwrite the Enhanced Prompt -- that's the
             // designed iteration loop. The User Prompt is the sticky source.
             st.positive = data.enhanced;
             // Sync the recommendation label to what the backend ACTUALLY
@@ -2526,7 +2535,7 @@ app.registerExtension({
 
       this.addDOMWidget("image_oasis_ui","div",container,{
         // Stay visible at any zoom level (parity with LTX2.3 Oasis / Video
-        // Oasis Viewer) — the default hides the DOM below a zoom threshold.
+        // Oasis Viewer) -- the default hides the DOM below a zoom threshold.
         hideOnZoom: false,
         getValue:()=>JSON.stringify({
           version:1,
@@ -2584,7 +2593,7 @@ app.registerExtension({
           // below) re-register the handler under it and drain any pending
           // result. onAdded runs BEFORE setValue in LiteGraph's configure
           // sequence, so any registration onAdded made used a freshly minted
-          // id — registerIoHandler cleans that up and re-keys to this one.
+          // id -- registerIoHandler cleans that up and re-keys to this one.
           if(typeof o.io_id === "string" && o.io_id) ioId = o.io_id;
           if(ex&&typeof ex==="object") st={...st,...ex};
           if(ui.open) open={...open,...ui.open};
@@ -2645,7 +2654,7 @@ app.registerExtension({
             if(typeof o.compare.pct==="number") cmpPercent = Math.min(100, Math.max(0, o.compare.pct));
             if("refIdx" in o.compare) cmpRefIdx = (o.compare.refIdx===null) ? null : (o.compare.refIdx|0);
           }
-          // Timer restore — only when this closure isn't already timing (in
+          // Timer restore -- only when this closure isn't already timing (in
           // which case the live interval owns the display). A blob captured
           // mid-run resumes the clock (queue-validated, async); otherwise
           // just restore the frozen between-runs readout.
@@ -2708,7 +2717,7 @@ app.registerExtension({
       // in app.nodePreviewImages[node.id] (the v3+ frontend path used by
       // b_preview events) or the legacy node.imgs array. We have our own
       // output pane on the right side, so the in-node rendering is just
-      // visual noise — and on Pheeby's VHS-equipped setup it engulfs the
+      // visual noise -- and on Pheeby's VHS-equipped setup it engulfs the
       // controls until a refresh. Clear both slots on every preview-related
       // event, then ask LiteGraph for a redraw so a half-drawn frame doesn't
       // linger. Cheap (a property delete and a dirty-flag set).

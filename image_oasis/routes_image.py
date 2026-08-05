@@ -186,7 +186,7 @@ def _atomic_write_json(path, data):
 
 
 def _get_registry():
-    """Return the registry module, reusing nodes.py's sibling-module namespace
+    """Return the registry module, reusing nodes_image.py's sibling-module namespace
     (image_oasis_registry) when it's already loaded — same file either way.
     Lets the /models route serve arch definitions straight from the registry
     so the frontend has no hand-synced mirror to drift."""

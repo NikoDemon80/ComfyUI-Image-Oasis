@@ -14,7 +14,7 @@ The IO stack, verbatim: **+ Add LoRA**, pick a file, set strength (text-encoder 
 
 ## The enhancer
 
-✨ Enhance is powered by Image Oasis — same pack, always present — and shares IO's resident LLM (models go in `models/LLM`, GGUF). Pick the model in **Prompt Enhancer**; **Enhancer Settings** at the bottom of that section exposes Auto GPU layers (leave it on), context size, and max tokens. Enhance is disabled while a video is generating; loading the LLM mid-run would evict the diffusion model.
+✨ Enhance is powered by Image Oasis - same pack, always present - and shares IO's resident LLM (models go in `models/LLM`, GGUF). Pick the model in **Prompt Enhancer**; **Enhancer Settings** at the bottom of that section exposes Auto GPU layers (leave it on), context size, and max tokens. Enhance is disabled while a video is generating; loading the LLM mid-run would evict the diffusion model.
 
 ## Modes
 
@@ -23,13 +23,32 @@ The IO stack, verbatim: **+ Add LoRA**, pick a file, set strength (text-encoder 
 
 ### ↻ Continue from viewed video
 
-Chains clips together in *any* mode, including T2V. **The tail source is whatever's in the viewer**: the next run starts from the last frame of the clip currently showing in the right pane. Click a different thumbnail in the scene bar and the next run continues from *that* clip instead. It overrides the Start slot while active.
+Chains clips together in *any* mode, including T2V. **The tail source is whatever's in the viewer**: the next run continues from the clip currently showing in the right pane. Click a different thumbnail in the scene bar and the next run continues from *that* clip instead. It overrides the Start slot while active.
 
 Tick it once and keep hitting 🎲: each clip picks up where the viewed one ended, then becomes the viewed clip itself, so the chain walks forward automatically. Use 🎬 Create Movie (or any editor) to stitch the saved files afterwards.
 
-Fidelity: continuing from the clip you *just generated* uses the exact frame tensor held in memory (lossless). Continuing from an older or loaded-from-disk clip extracts the frame from the encoded video, which costs one decode round-trip; in practice it's invisible.
+#### Motion context
+
+A single still tells the model *where* things are, not where they were **going**. Pose is ambiguous: a leg mid-stride looks the same swinging forward or back, and a camera frozen mid-pan gives no hint which way it was moving. That's why chained clips used to lurch at every join - the model re-invented the motion each time.
+
+**Motion context** pins the last second or two of the previous clip in front of the timeline as real, frozen frames. The model reads direction, speed, gait phase and camera drift straight out of them instead of guessing. Those frames are cropped off after decode, so you never see them.
+
+| Setting | Window | At 25fps |
+|---|---|---|
+| Last frame only | 1 frame | the old behaviour |
+| 9 / 17 / 25 / 33 / 41 / 49 frames | 2-7 latent frames | 0.36s / 0.68s / 1.00s / 1.32s / 1.64s / 1.96s |
+
+25 frames at 25fps is exactly one second and a good default. 49 is just under two seconds, the longest window on offer. Bigger windows cost more sampling time and nothing else, but that cost is real: the overhead is 8 frames per latent frame, so a 49-frame window samples 56 extra frames in front of your clip.
+
+**Your clip does not get shorter.** Frames still means delivered frames. The context is extra work sampled in front of your clip, not a slice taken out of it - a 121-frame render with a 25-frame window samples 153 and delivers 121.
+
+**Audio is untouched.** In File mode the context window is padded with silence, so your uploaded track still starts on delivered frame 1 and is muxed exactly as supplied - never trimmed, resampled or shifted. In Generate mode the previous clip's tail audio is frozen alongside the frames, so ambient beds, music and footfalls carry across the cut instead of restarting. With audio Off nothing happens at all.
+
+Windows are 8n+1 counts like every other LTX length. Anything else is snapped down. If the source clip is too short for the window you picked, it drops to the largest one that fits and says so in the console.
 
 A T2V run with Continue active silently becomes image-conditioned from the second run on. That's expected; it's how the chain works.
+
+Two things worth knowing: the tail is always read from the file in the viewer, so a clip loaded from disk behaves exactly like one you just rendered. And if the tail source runs at a different frame rate than your render, the motion reads at the wrong speed - the console warns when that happens.
 
 ## Reference images
 
@@ -50,12 +69,12 @@ One timeline, one list. The **Enhanced Prompt** is the whole-clip description: s
 
 **Frames** on each beat sets duration. Leave every beat at 0 to split the video evenly. The meter under the beat list shows how your beats add up against the Video frame count: green = match, amber = short (frames past the last beat follow the Enhanced prompt alone, no local steering), red = over (beats past the video's end get truncated). When the sum doesn't match, **Match frames** sets Video frames to the beat sum (snapped to the LTX grid). Add as many beats as you need; there is no 3-guide hard limit (VRAM/latent size is the real constraint). Guide frames are cropped out after sampling and never appear literally in the output.
 
-Tips: 2–3 beats for a 5-second clip is plenty; beats describe *actions*, not new scenes. Empty text with a guide is fine (guide-only beat). Empty guide with text is fine too.
+Tips: 2-3 beats for a 5-second clip is plenty; beats describe *actions*, not new scenes. Empty text with a guide is fine (guide-only beat). Empty guide with text is fine too.
 
 ## Video / Audio
 
 - **Width / Height**: LTX wants multiples of 32; the ratio locks, ↔ swap, and ⤢ use-size all snap accordingly. Sweet spot with a reference image: render at **half the source image's resolution** (e.g. 1536×1536 source → 768×768 video), a clean 2:1 supersample.
-- **Frames**: snaps to the LTX grid (8n+1: 97, 121, 145…). The ≈ seconds line updates live as you type.
+- **Frames**: snaps to the LTX grid (8n+1: 97, 121, 145...). The ≈ seconds line updates live as you type.
 - **FPS**: playback rate of the encoded file. LTX's native rhythm is 25.
 - **Cond. FPS**: the frame rate stamped into the model's conditioning: how fast the model *thinks* time passes, independent of playback. 0 = follow FPS, which is right 95% of the time. The other 5%: conditioning 25 + encoding 12.5 = smooth slow motion; conditioning 25 now + RIFE-interpolating to 50 later keeps motion natural.
 - **Audio**: three modes, all needing the Audio VAE under Model when not Off:
@@ -85,16 +104,20 @@ Scrub bar with a frame counter, ▶/⏸ (Space), frame-step ⏮/⏭ (arrow keys;
 
 The loop button cycles through three playback modes: **off → loop** (repeat the current clip) **→ cycle** (play through the scene bar clip after clip, a rolling dailies reel).
 
-The **scene bar** keeps up to 24 renders, one click away, surviving tab switches and page reloads (saved entries also survive a ComfyUI restart; temp previews don't). The **+** tile loads any video from your `output/` folder into the bar. **💾 Save** (header button; hides when the pane is empty) copies the current preview losslessly into your output folder under your Save prefix. Scene ‹ n/m › nav sits in the info bar. A ✓ badge marks saved entries.
+The **scene bar** keeps up to 48 renders, one click away, surviving tab switches and page reloads (saved entries also survive a ComfyUI restart; temp previews don't). The **+** tile loads any video from your `output/` folder into the bar. **💾 Save** (header button; hides when the pane is empty) copies the current preview losslessly into your output folder under your Save prefix. Scene ‹ n/m › nav sits in the info bar. A ✓ badge marks saved entries.
+
+**Rearranging the bar.** Hover a thumbnail and click its **✕** to drop it from the strip; the file on disk is untouched, so this is housekeeping, not deletion. To change the order, **press and hold a thumbnail for a moment, then drag** it where you want. A thin accent line shows where it will land, and the ✕ buttons hide while you're dragging so you can't remove a clip by accident. A quick tap still just loads the clip, so the hold is what tells the two apart. Order matters for 🎬 Create Movie, which concatenates left to right, so this is how you sequence a run before stitching it.
 
 ### 🎬 Create Movie
 
 Concatenates every **saved** clip in the scene bar (left to right) into one file at `output/video/create_movie_NNNNN.mp4`. Clips must match resolution and FPS. When every clip shares the same bitstream params, video is stream-copied (lossless). If any clip differs (common after Clip, which re-encodes), the movie is re-encoded so the join stays clean. The 🔊/🔇 toggle controls audio: on, audio is re-encoded to AAC and silent clips get silence so the timeline stays aligned; off, the movie is silent.
 
+The finished movie is added to the scene bar as a saved entry, so you can play it back immediately. It is not excluded from the next Create Movie: concatenating a movie with further clips is how you build runs longer than the bar holds. Remove what you don't want with a thumbnail's X first.
+
 ## Encode
 
-`auto` everything is a good default. webm accepts VP9/AV1 only; mp4 takes h264/hevc; mkv takes anything. Quality presets map to per-codec CRF values (codec scales differ, which is why presets rather than one raw number); `custom` exposes CRF directly. **Save prefix** sets where 💾 Save lands under `output/` and the filename stem (default `video/LTX23Oasis` → `output/video/LTX23Oasis_…`). Note hevc previews may not play in-browser; the file itself is fine.
+`auto` everything is a good default. webm accepts VP9/AV1 only; mp4 takes h264/hevc; mkv takes anything. Quality presets map to per-codec CRF values (codec scales differ, which is why presets rather than one raw number); `custom` exposes CRF directly. **Save prefix** sets where 💾 Save lands under `output/` and the filename stem (default `video/LTX23Oasis` → `output/video/LTX23Oasis_...`). Note hevc previews may not play in-browser; the file itself is fine.
 
 ## Presets & Theme
 
-Presets capture the model/generation setup and **never** your prompts, seed, or reference images; loading one can't wipe in-progress work. Same cards, expand-for-details, and drag-to-reorder as IO, stored server-side under `user/ltx23_oasis/`. The Theme section edits **this node’s** palette (independent of Image Oasis) — and it also skins **Video Oasis Viewer**: the Viewer has no theme editor of its own and follows whatever palette you set here, so both nodes stay matched on the canvas.
+Presets capture the model/generation setup and **never** your prompts, seed, or reference images; loading one can't wipe in-progress work. Same cards, expand-for-details, and drag-to-reorder as IO, stored server-side under `user/ltx23_oasis/`. The Theme section edits **this node's** palette (independent of Image Oasis) - and it also skins **Video Oasis Viewer**: the Viewer has no theme editor of its own and follows whatever palette you set here, so both nodes stay matched on the canvas.

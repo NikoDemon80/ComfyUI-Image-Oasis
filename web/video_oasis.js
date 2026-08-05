@@ -2,7 +2,7 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
 /* ==================================================================
- * Video Oasis Viewer — frontend
+ * Video Oasis Viewer -- frontend
  *
  * Full in-node video viewer + encode/save:
  *  - Player: play/scrub/frame-step, off→loop→cycle, mute, speed, lightbox
@@ -88,8 +88,17 @@ const CSS = `
 .vo-nav-arrow:hover{color:var(--io-accent,#6f8bbd);}
 /* ── History / scene bar (inside pane, matches LTXO) ── */
 .vo-history{display:flex;gap:5px;overflow-x:auto;padding:4px 9px 6px;min-height:58px;flex-shrink:0;border-top:1px solid var(--io-bd,#3a3a3a);}
-.vo-history::-webkit-scrollbar{height:6px;}
-.vo-history::-webkit-scrollbar-thumb{background:var(--io-bd,#3a3a3a);border-radius:3px;}
+/* Scoped one level deeper than the element's own class, and with an explicit
+   :hover twin. ComfyUI ships a global ::-webkit-scrollbar-thumb:hover rule;
+   the :hover pseudo-class raises its specificity to a dead tie with a
+   single-class rule of ours, and ties go to whichever stylesheet loaded last,
+   which is ComfyUI's. The thumb then repaints in the menu color on hover and
+   vanishes against the node body. The extra widget-class scope outranks it
+   outright; the :hover twin makes it explicit so the next stylesheet change
+   upstream can't quietly win it back. */
+.vo-widget .vo-history::-webkit-scrollbar{height:6px;}
+.vo-widget .vo-history::-webkit-scrollbar-thumb{background:var(--io-bd,#3a3a3a);border-radius:3px;}
+.vo-widget .vo-history::-webkit-scrollbar-thumb:hover{background:var(--io-bd,#3a3a3a);}
 .vo-thumb{position:relative;flex:0 0 auto;width:88px;height:50px;border-radius:4px;border:2px dashed var(--io-go-bd,#4f7a56);cursor:pointer;background:#000 center/cover no-repeat;box-sizing:border-box;transition:box-shadow .12s ease;}
 .vo-thumb:hover{box-shadow:0 0 0 1px rgba(255,255,255,.18);}
 .vo-thumb.vo-saved{border-style:solid;}
@@ -180,7 +189,7 @@ const FORMATS = ["auto", "mp4", "webm", "mkv"];
 const CODECS = ["auto", "h264", "hevc", "vp9", "av1"];
 const QUALITIES = ["balanced", "high", "small", "custom"];
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
-const HISTORY_CAP = 24;
+const HISTORY_CAP = 48;
 
 /* ------------------------------------------------------------------ */
 /* result routing (module scope, IO's stash-and-drain lifecycle)       */
@@ -235,7 +244,7 @@ app.registerExtension({
       let lightboxOpen = false;
       let clipInS = null, clipOutS = null;
 
-      /* ── static DOM (built ONCE — the <video> must never be re-created
+      /* ── static DOM (built ONCE -- the <video> must never be re-created
          by an innerHTML render, or playback restarts on every state
          change). Only the sections column re-renders IO-style. ── */
       const container = document.createElement("div");
@@ -726,8 +735,8 @@ app.registerExtension({
       const refreshMovieAudioBtn = () => {
         movieAudioBtn.textContent = movieAudio ? "\u{1f50a}" : "\u{1f507}";
         movieAudioBtn.title = movieAudio
-          ? "Movie audio: on — keep audio where present, silence for silent clips"
-          : "Movie audio: off — strip audio from every clip";
+          ? "Movie audio: on \u2014 keep audio where present, silence for silent clips"
+          : "Movie audio: off \u2014 strip audio from every clip";
         movieAudioBtn.classList.toggle("vo-on", movieAudio);
       };
       const toggleMovieAudio = () => {
@@ -735,7 +744,7 @@ app.registerExtension({
         refreshMovieAudioBtn();
       };
 
-      /* ── history navigation — IO's modulo wraparound ── */
+      /* ── history navigation -- IO's modulo wraparound ── */
 
       const navBy = (delta) => {
         if (history.length < 2) return;
@@ -865,7 +874,7 @@ app.registerExtension({
             if (h > c.height) { h = c.height; w = h * ar; }
             c.getContext("2d").drawImage(v, (c.width - w) / 2, (c.height - h) / 2, w, h);
             t.style.backgroundImage = `url(${c.toDataURL("image/jpeg", 0.7)})`;
-          } catch { /* canvas unavailable — thumb stays black */ }
+          } catch { /* canvas unavailable -- thumb stays black */ }
         };
         // The queue must not stall behind one slow file, but aborting the
         // load on a timeout is how thumbs go permanently black: a fresh
@@ -1166,7 +1175,7 @@ app.registerExtension({
          After a server restart the temp dir is cleared: restored history
          entries may point at files that no longer exist. A dead entry is
          fully unrecoverable (can't play, and /video_oasis/save skips it),
-         so keeping a black thumb around is a lie — prune it. Detection is
+         so keeping a black thumb around is a lie -- prune it. Detection is
          a 1-byte ranged fetch against /view rather than the <video> error
          event, because hevc entries fire DECODE errors while the file is
          intact and saveable. 404 → prune; any 2xx/206 → keep; network
@@ -1344,6 +1353,16 @@ app.registerExtension({
           });
           const data = await r.json();
           if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+          // Land the finished movie in the scene bar, same as Clip does. It
+          // is NOT excluded from the next Create Movie: concatenating a movie
+          // with more clips is a deliberate workflow for runs longer than the
+          // bar holds. Prune what you don't want with the thumb's X first.
+          if (data.filename) {
+            await loadExternalVideo({
+              filename: data.filename,
+              subfolder: data.subfolder || "",
+            });
+          }
           const parts = [`Movie \u2192 output/${data.path}`];
           if (data.size_bytes) parts.push(fmtSize(data.size_bytes));
           if (data.duration_s) parts.push(`${data.duration_s.toFixed(1)}s`);
@@ -1445,8 +1464,8 @@ app.registerExtension({
          a rebuild, onAdded runs while ioId is still "" (the saved id is
          only restored by setValue moments later). Registration and drain
          therefore live in registerIoHandler(), called from BOTH onAdded
-         (fresh node — setValue never fires) and the END of setValue
-         (rebuild path — after preview state is restored, so drained
+         (fresh node -- setValue never fires) and the END of setValue
+         (rebuild path -- after preview state is restored, so drained
          results append after the restored history). registeredIoId tracks
          the key actually in VO_HANDLERS so a re-call with a different
          ioId cleans up the stale registration. ── */

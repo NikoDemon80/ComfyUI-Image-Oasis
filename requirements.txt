@@ -1,4 +1,4 @@
-# Oasis Suite (Image Oasis v1.5+) -- Python dependencies
+# Oasis Suite - Python dependencies
 #
 # Core runtime dependencies (torch, numpy, Pillow, aiohttp, comfy.*,
 # folder_paths, PyAV/av) are provided by ComfyUI itself and are NOT listed
@@ -8,7 +8,7 @@
 # packages below installed, the common-case flow still works
 # (checkpoint/diffusion model loading, sampling, refiner pass, and
 # algorithmic upscaling). Each dep below enables one specific feature; if
-# missing, that feature errors clearly at use-time -- the node still loads.
+# missing, that feature errors clearly at use-time - the node still loads.
 
 # Model-based upscaling for the Upscale section's "Model" mode.
 # Algorithmic upscaling (lanczos / bicubic / bilinear / nearest-exact / area)
@@ -16,16 +16,24 @@
 spandrel
 spandrel-extra-arches
 
-# Prompt enhancer ("magic wand") -- local GGUF LLM that expands short prompts
+# Prompt enhancer ("magic wand") - local GGUF LLM that expands short prompts
 # (Image Oasis and LTX2.3 Oasis). NOT enabled by default: the CUDA-accelerated
 # install is toolkit-specific (cu121 / cu122 / cu124 / etc.) and a plain
 # `pip install` lands the CPU-only wheel, which is much slower. See
-# image_oasis/README.md "Prompt enhancer setup" for the install command
-# matching your hardware.
+# image_oasis/image_oasis_README.md "Prompt enhancer setup" for the install
+# command matching your hardware.
 # llama-cpp-python
 
+# BPM + musical-key detection for the Audio Oasis node's Analyze button.
+# NOT enabled by default: it pulls in numba/llvmlite, and loading a track,
+# chopping it on the waveform, playing segments, and saving them all work
+# without it - only the BPM/key readout needs it. First analyze() call after
+# a ComfyUI restart is slow (10-30s, librosa's numba JIT warming up); every
+# call after that is fast for the rest of the server's life.
+# librosa
+
 # ---------------------------------------------------------------------------
-# Non-pip dependencies (ComfyUI custom nodes -- install via Manager / git).
+# Non-pip dependencies (ComfyUI custom nodes - install via Manager / git).
 # None of these are installable from this requirements file.
 # ---------------------------------------------------------------------------
 #
@@ -39,4 +47,4 @@ spandrel-extra-arches
 #     Without it, distilled runs with an empty negative still work; a
 #     non-empty negative at CFG 1 will error until KJNodes is installed.
 #
-# See the root README "Install" section and ltx23_oasis/README.md.
+# See the root README "Install" section and ltx23_oasis/ltx23_oasis_README.md.

@@ -1,20 +1,20 @@
 # Video Oasis Viewer
 
-Part of the **Oasis Suite** (Image Oasis v1.5+). Node class id:
-`VideoOasisPreview`. Frontend: [`../web/videoOasis.js`](../web/videoOasis.js).
+Part of the **Oasis Suite**. Node class id:
+`VideoOasisPreview`. Frontend: [`../web/video_oasis.js`](../web/video_oasis.js).
 Suite overview: [root README](../README.md).
 
 A preview-first Save Video node. Connect a `VIDEO` input; the node encodes to
 ComfyUI's **temp** directory and plays the result in-node. Nothing is written
 to your output folder until you press **Save**, which copies the already-encoded
-file losslessly -- workflow metadata included. The `VIDEO` output passes the
+file losslessly - workflow metadata included. The `VIDEO` output passes the
 same tensor through so you can keep chaining.
 
 ## Quick start
 
 1. Drop **Video Oasis Viewer** on the graph and connect any `VIDEO`.
 2. Set encode prefs in the node (or leave `auto` / balanced defaults).
-3. Run the graph -- the clip appears in the player and the **scene bar**.
+3. Run the graph - the clip appears in the player and the **scene bar**.
 4. Press **💾 Save** when you want to keep it under your Save prefix.
 
 ## Player
@@ -31,7 +31,7 @@ same tensor through so you can keep chaining.
 
 ## Scene bar
 
-Keeps up to **24** recent clips, one click away:
+Keeps up to **48** recent clips, one click away:
 
 - Click a thumbnail to load it in the player
 - Delete entries you don't need; long-press drag to reorder
@@ -62,6 +62,10 @@ right) into `output/video/create_movie_NNNNN.mp4`.
   stays clean
 - 🔊/🔇 toggle: with audio on, tracks are aligned (silence padded where needed);
   off = silent movie
+- The movie lands in the scene bar as a saved entry, and is **not** excluded
+  from the next Create Movie - concatenating a movie with further clips is how
+  you build runs longer than the bar holds. Remove what you don't want with a
+  thumbnail's ✕ first
 
 ## Encode / Save
 

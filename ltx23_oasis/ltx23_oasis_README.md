@@ -1,12 +1,12 @@
 # LTX2.3 Oasis
 
-Part of the **Oasis Suite** (Image Oasis v1.5+). Node class id: `LTX23Oasis`.
-Frontend: [`../web/ltx23Oasis.js`](../web/ltx23Oasis.js). Suite overview:
+Part of the **Oasis Suite**. Node class id: `LTX23Oasis`.
+Frontend: [`../web/ltx23_oasis.js`](../web/ltx23_oasis.js). Suite overview:
 [root README](../README.md).
 
 All-in-one LTX 2.3 video generation in the Image Oasis UI shape. Encode, player,
 scene bar, Clip, Create Movie, and Save go through the in-pack
-**Video Oasis Viewer** path -- you do not need a separate video pack.
+**Video Oasis Viewer** path - you do not need a separate video pack.
 
 In-node Help is the same text as [`ltx23_oasis_help_content.md`](ltx23_oasis_help_content.md).
 
@@ -30,7 +30,7 @@ In-node Help is the same text as [`ltx23_oasis_help_content.md`](ltx23_oasis_hel
 | Required | This Oasis Suite pack (includes Video Oasis Viewer encode/player) |
 | Optional | `ComfyUI-GGUF` for GGUF diffusion |
 | Optional | `ComfyUI-KJNodes` for LTX2 NAG when CFG is 1 and a negative is set |
-| Optional | `llama-cpp-python` (CUDA/Metal) for the GGUF prompt enhancer -- same as Image Oasis |
+| Optional | `llama-cpp-python` (CUDA/Metal) for the GGUF prompt enhancer - same as Image Oasis |
 
 Presets and theme: `ComfyUI/user/ltx23_oasis/`. HTTP API: `/ltx23_oasis/*`
 (Save and frame extraction ride the shared `/video_oasis/*` routes).
@@ -57,13 +57,33 @@ generating so the LLM load cannot evict the diffusion model mid-run.
 
 ### ↻ Continue from viewed video
 
-Chains clips in *any* mode (including T2V). The next run starts from the **last
-frame of whatever is in the viewer**. Click another scene-bar thumb and the
-chain continues from that clip instead. Tick once and keep hitting 🎲 to walk
+Chains clips in *any* mode (including T2V). The next run continues from
+**whatever is in the viewer**. Click another scene-bar thumb and the chain
+continues from that clip instead. Tick once and keep hitting 🎲 to walk
 forward; stitch with 🎬 Create Movie afterwards.
 
-Continuing from the clip you just generated uses the in-memory frame tensor
-(lossless). Older / loaded-from-disk clips decode one frame from the file.
+**Motion context** (v1.6) decides how much of the previous clip the model gets
+to see. A single still carries pose but no motion - a leg mid-stride looks
+identical swinging forward or back - so chained clips used to lurch at the
+join. Pinning the previous second in front of the timeline as frozen frames
+gives the model real direction, speed, gait phase and camera drift. Windows run
+out to just under two seconds.
+
+| Setting | Window | At 25fps |
+|---|---|---|
+| Last frame only | 1 frame | pre-1.6 behaviour |
+| 9 / 17 / 25 / 33 / 41 / 49 | 2-7 latent frames | 0.36 / 0.68 / 1.00 / 1.32 / 1.64 / 1.96s |
+
+Context frames are cropped after decode and never appear in the output.
+**Frames still means delivered frames** - a 121-frame render with a 25-frame
+window samples 153 and delivers 121. Audio is untouched: File mode pads the
+window with silence so your track still starts on delivered frame 1 and is
+muxed exactly as supplied; Generate mode freezes the previous clip's tail audio
+so ambient and music carry across the cut.
+
+The tail is read from the file in the viewer, so loaded-from-disk clips behave
+exactly like fresh renders. Mismatched source fps is warned about in the
+console (the motion reads at the wrong speed).
 
 ## Reference images
 
@@ -93,9 +113,9 @@ sampling and never appear literally in the output.
 - **FPS**: playback rate of the encoded file (native rhythm is 25).
 - **Cond. FPS**: how fast the model *thinks* time passes; `0` = follow FPS.
 - **Audio** (needs Audio VAE when not Off):
-  - **Off** -- silent
-  - **Generate** -- soundtrack from the prompt
-  - **File** -- audio-driven video; your waveform is muxed back (not vocoder-decoded)
+  - **Off** - silent
+  - **Generate** - soundtrack from the prompt
+  - **File** - audio-driven video; your waveform is muxed back (not vocoder-decoded)
 
 ## Generation
 
@@ -111,7 +131,7 @@ Seed: ▶/🎲 by the seed field and header, plus After-gen
 ## Upscale: Spatial Upsample (×2)
 
 LTX 2× latent upsampler after the main sample. **Polish pass** re-samples at
-the upscaled resolution (heavy). Sampled video is cached -- toggling Upscale
+the upscaled resolution (heavy). Sampled video is cached - toggling Upscale
 re-runs only upsample + decode. Off by default (likeness drift with refs; half-res
 + supersample often looks better).
 
@@ -124,7 +144,7 @@ Same toolkit as [Video Oasis Viewer](../video_oasis/video_oasis_README.md):
   the graph
 - **Clip** (`[` / `]` then Clip)
 - Loop: off → loop → cycle
-- Scene bar (≤24), **+** load from output, **Save** (header; hides when empty)
+- Scene bar (≤48), **+** load from output, **Save** (header; hides when empty)
 - History survives tab switches and reloads (temps pruned after Comfy restart)
 
 ### 🎬 Create Movie
@@ -132,7 +152,9 @@ Same toolkit as [Video Oasis Viewer](../video_oasis/video_oasis_README.md):
 Concatenates every **saved** scene-bar clip into
 `output/video/create_movie_NNNNN.mp4`. Stream-copy when params match;
 re-encode when needed (common after Clip). Audio toggle pads silence so the
-timeline stays aligned.
+timeline stays aligned. The movie lands back in the scene bar as a saved entry
+and is **not** excluded from the next Create Movie, so movie-plus-clips is how
+you build runs longer than the bar holds.
 
 ## Encode
 
@@ -142,7 +164,7 @@ defaults to `video/LTX23Oasis`. HEVC may not preview in-browser.
 
 ## Presets & Theme
 
-Presets capture model/generation setup -- **never** prompts, seed, or reference
+Presets capture model/generation setup - **never** prompts, seed, or reference
 images. Stored under `user/ltx23_oasis/`. Theme edits **this node's** palette
 (independent of Image Oasis).
 

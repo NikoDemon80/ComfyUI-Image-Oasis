@@ -65,12 +65,12 @@ ARCH_REGISTRY = {
         "accepts_image_cond": False,
         "default_clip_type": "krea2",
         "clip_slots": 1,                # single Qwen3-VL-4B TE
-        # Startup flags that corrupt this architecture. nodes.py checks these
+        # Startup flags that corrupt this architecture. nodes_image.py checks these
         # against comfy.cli_args and refuses the run BEFORE loading anything —
         # sage-attention breaks Krea 2's attention layout and produces silent
         # NaN latents (black images) with no error.
         "incompatible_flags": ("use_sage_attention",),
-        # Automatic conditioning rebalance, applied post-encode in nodes.py.
+        # Automatic conditioning rebalance, applied post-encode in nodes_image.py.
         # Krea 2 conditions on 12 stacked Qwen3-VL hidden-state taps (shallow
         # -> deep, packed into one (B, seq, 12*2560) tensor); alignment
         # training under-weights the deep taps that carry fine detail and

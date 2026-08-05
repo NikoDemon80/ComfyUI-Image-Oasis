@@ -25,23 +25,28 @@ import torch
 from . import registry_video as rv
 from . import stage_load_video as load
 from . import stage_condition_video as scond
+from . import stage_context_video as sctx
 from . import stage_sample_video as ssamp
-from .comfy_bridge import node_class
+from .comfy_bridge_video import node_class
 
 log = logging.getLogger("LTXOasis")
 
 _RAW_CACHE = {}     # key -> loaded dict
 _WORK_CACHE = {}    # key -> (models, clip)
 _SAMPLED = {}       # io_id -> {"key", "latent"(cpu), cond fields}
-_LAST_FRAME = {}    # io_id -> IMAGE tensor [1,H,W,C] (continue-from-last)
-_TAIL_VER = {}      # io_id -> int; bumps when the tail frame changes, so the
+_TAIL_SRC = {}      # io_id -> {"video","subfolder","type"}: the viewer entry
+                    # that seeds continue-from-viewed. A reference, not
+                    # pixels — whatever is in the viewer IS the tail source,
+                    # including clips loaded from previous sessions, so the
+                    # frames get decoded off disk at generate time.
+_TAIL_VER = {}      # io_id -> int; bumps when the tail source changes, so the
                     # sampled-latent key sees continue-last input changes
 
 
 def clear_caches():
     """Manual big hammer (POST /ltx23_oasis/flush_cache): drop every
-    cached model set and sampled latent. _LAST_FRAME survives — tail frames
-    are tiny and losing them breaks continue-from-last for no memory win."""
+    cached model set and sampled latent. _TAIL_SRC survives — it is a few
+    strings, and losing it breaks continue-from-viewed for no memory win."""
     _RAW_CACHE.clear()
     _WORK_CACHE.clear()
     _SAMPLED.clear()
@@ -131,7 +136,10 @@ def _adapt_flat_state(st):
         },
         "refs": {"start_image": st.get("start_image", ""),
                  "guides": guides,
-                 "continue_last": bool(st.get("continue_last"))},
+                 "continue_last": bool(st.get("continue_last")),
+                 # Motion context window, in PIXEL frames. 0 = the classic
+                 # single-frame tail. Snapped to the quantum in generate().
+                 "context_frames": int(st.get("context_frames", 0) or 0)},
         "gen": gen,
         "upscale": {"enabled": bool(st.get("enable_upscale")),
                     "latent_upsampler": st.get("upscale_upsampler", ""),
@@ -145,6 +153,86 @@ def _adapt_flat_state(st):
                    "crf": st.get("crf", 20),
                    "save_prefix": st.get("save_prefix", "video/LTX23Oasis")},
     }
+
+
+def _snap_context_px(px, quantum):
+    """Snap a motion-context window down to a legal 8n+1 pixel count.
+
+    Returns 0 when nothing legal fits, which means the classic single-frame
+    tail. The minimum useful window is quantum+1 (two latent frames): one
+    anchor plus one delta frame is the smallest thing that carries motion at
+    all rather than just a pose."""
+    px = int(px)
+    if px < quantum + 1:
+        return 0
+    return ((px - 1) // quantum) * quantum + 1
+
+
+def _load_tail(spec, io_id, gen, refs_cfg, audio_enabled, audio_file):
+    """Decode the tail of whatever clip the viewer is currently showing.
+
+    Returns (images, ctx_latent_frames, ctx_audio). ctx_latent_frames is 0
+    for the classic single-frame tail, in which case nothing about the
+    timeline length changes and this behaves exactly as it always has.
+
+    A window of N latent frames is N*quantum pixel frames of real motion
+    pinned in front of the delivered timeline: enough for the model to read
+    direction and speed out of the previous segment instead of guessing them
+    from a single still.
+    """
+    src = _TAIL_SRC.get(io_id) or {}
+    path = sctx.resolve_entry_path(src.get("video"), src.get("subfolder"),
+                                   src.get("type"))
+    if not path:
+        raise ValueError(
+            "[LTX Oasis] The clip seeding continue-from-viewed is not on "
+            "disk any more. Pick another entry in the scene bar.")
+
+    q = int(spec["frame_quantum"])
+    # context_frames is the ENCODED window in pixel frames and is itself an
+    # 8n+1 count, because the first latent frame of any sequence decodes to a
+    # single pixel frame and every later one to `q`. 17 real frames is 3
+    # latent frames, not 24.
+    want_px = _snap_context_px(max(0, int(refs_cfg.get("context_frames", 0) or 0)), q)
+    ctx_latent = ((want_px - 1) // q + 1) if want_px else 0
+    n_frames = want_px if ctx_latent else 1
+
+    # The tail waveform is only wanted when audio is actually being
+    # GENERATED: on a driven run the uploaded track is authoritative and the
+    # context window gets silence instead.
+    want_audio = bool(ctx_latent and audio_enabled
+                      and not (audio_file or "").strip())
+
+    images, ctx_audio, info = sctx.extract_tail(path, n_frames, want_audio)
+
+    got = int(images.shape[0])
+    if not ctx_latent:
+        images = images[-1:]
+    elif got < n_frames:
+        # Short source clip: fall back to the largest legal window that fits.
+        want_px = _snap_context_px(got, q)
+        ctx_latent = ((want_px - 1) // q + 1) if want_px else 0
+        images = images[-want_px:] if ctx_latent else images[-1:]
+        log.info("[LTX Oasis] Tail source yielded only %d frames — motion "
+                 "context reduced to %d frames (%d latent).",
+                 got, want_px if ctx_latent else 1, ctx_latent)
+
+    src_fps = float(info.get("fps") or 0.0)
+    tgt_fps = float(gen.get("fps") or spec["fps_default"])
+    if ctx_latent and src_fps and abs(src_fps - tgt_fps) > 0.01:
+        log.warning(
+            "[LTX Oasis] Tail source runs at %.3f fps but this render is at "
+            "%.3f fps — the motion context will read as %.0f%% speed.",
+            src_fps, tgt_fps, (src_fps / tgt_fps) * 100.0)
+
+    # The viewer entry can be any resolution (an earlier session, a different
+    # aspect, an upscaled render); the frozen region has to match the target
+    # latent's spatial shape.
+    images = sctx.fit_context_images(images, int(gen["width"]),
+                                     int(gen["height"]))
+    if ctx_audio is not None and not ctx_latent:
+        ctx_audio = None
+    return images, ctx_latent, ctx_audio
 
 
 class LTX23Oasis:
@@ -209,7 +297,7 @@ class LTX23Oasis:
         # Continue-from-last works in ANY mode: with a tail frame present the
         # run switches to the image-conditioned recipe. First run of a session
         # (no tail yet) proceeds as plain t2v.
-        if (refs_cfg.get("continue_last") and io_id in _LAST_FRAME
+        if (refs_cfg.get("continue_last") and io_id in _TAIL_SRC
                 and mode == "t2v" and "i2v" in spec["modes"]):
             mode = "i2v"
             spec = rv.validate_combo(arch, source, mode)
@@ -266,25 +354,58 @@ class LTX23Oasis:
             cond = {"positive": cached["positive"],
                     "negative": cached["negative"],
                     "used_guides_or_inplace": cached["used_guides_or_inplace"],
-                    "video_latent_frames": cached["video_latent_frames"]}
+                    "video_latent_frames": cached["video_latent_frames"],
+                    "ctx_latent_frames": cached.get("ctx_latent_frames", 0)}
             latent = {"samples": cached["latent"]}
         else:
             # ── Conditioning ─────────────────────────────────────────────
             pos_text = str(ex.get("prompt", ""))
             neg_text = str(ex.get("negative", "") or "").strip()
 
+            # References first: the motion-context window changes the length
+            # of the timeline everything else is measured against, so beats
+            # and beat guides cannot be laid out until it is known.
+            refs = {"start": None, "guides": []}
+            ctx_latent_frames, ctx_audio = 0, None
+            if refs_cfg.get("continue_last") and io_id in _TAIL_SRC:
+                refs["start"], ctx_latent_frames, ctx_audio = _load_tail(
+                    spec, io_id, gen, refs_cfg, audio_enabled, audio_file)
+            elif refs_cfg.get("start_image"):
+                refs["start"] = scond.load_ref_image(refs_cfg["start_image"])
+            ctx_px = sctx.context_span_px(ctx_latent_frames,
+                                          int(spec["frame_quantum"]))
+            if spec.get("guides"):
+                for g in (refs_cfg.get("guides") or []):
+                    img = scond.load_ref_image(g.get("image", ""))
+                    if img is not None:
+                        # Beat guides are indexed against the DELIVERED
+                        # timeline; the context window sits in front of it.
+                        refs["guides"].append(
+                            {"image": img,
+                             "frame_idx": int(g.get("frame_idx", 0)) + ctx_px,
+                             "strength": g.get("strength", 1.0)})
+
             relay = dict(ex.get("relay") or {})
             mask_fn = None
             if relay.get("enabled") and spec.get("prompt_relay"):
                 any_model = next(iter(models.values()))
                 stride = scond.relay_temporal_stride(any_model)
-                latent_frames = (int(gen["frames"]) - 1) // stride + 1
+                latent_frames = ((int(gen["frames"]) - 1) // stride + 1
+                                 + ctx_latent_frames)
                 segs = []
                 for s in (relay.get("segments") or []):
                     seg = dict(s)
                     if seg.get("frames"):
                         seg["frames"] = max(1, round(int(seg["frames"]) / stride))
                     segs.append(seg)
+                if ctx_latent_frames and segs:
+                    # A leading slice over the context window carrying the
+                    # first beat's text keeps every real beat aligned to the
+                    # delivered frame it was written for. Those frames are
+                    # frozen anyway; the slice exists to keep the mask honest.
+                    lead = dict(segs[0])
+                    lead["frames"] = ctx_latent_frames
+                    segs.insert(0, lead)
                 pos_text, mask_fn = scond.build_relay(
                     clip, pos_text, segs, latent_frames,
                     relay_options=relay.get("options"))
@@ -306,23 +427,10 @@ class LTX23Oasis:
             if mask_fn is not None:
                 models = scond.apply_relay_to_models(models, mask_fn)
 
-            # ── References ───────────────────────────────────────────────
-            refs = {"start": None, "guides": []}
-            if refs_cfg.get("continue_last") and io_id in _LAST_FRAME:
-                refs["start"] = _LAST_FRAME[io_id]
-            elif refs_cfg.get("start_image"):
-                refs["start"] = scond.load_ref_image(refs_cfg["start_image"])
-            if spec.get("guides"):
-                for g in (refs_cfg.get("guides") or []):
-                    img = scond.load_ref_image(g.get("image", ""))
-                    if img is not None:
-                        refs["guides"].append({"image": img,
-                                               "frame_idx": g.get("frame_idx", 0),
-                                               "strength": g.get("strength", 1.0)})
-
             cond = scond.build_latent_and_conditioning(
                 spec, mode, loaded, gen, refs, positive, negative,
-                audio_enabled, audio_file=audio_file)
+                audio_enabled, audio_file=audio_file,
+                ctx_latent_frames=ctx_latent_frames, ctx_audio=ctx_audio)
 
             # ── Sample, then stash the latent on CPU for upscale retakes ──
             latent = ssamp.run_sampling(spec, models, cond, gen)
@@ -335,20 +443,17 @@ class LTX23Oasis:
                         "negative": cond["negative"],
                         "used_guides_or_inplace": cond.get("used_guides_or_inplace", False),
                         "video_latent_frames": cond.get("video_latent_frames"),
+                        "ctx_latent_frames": cond.get("ctx_latent_frames", 0),
                     }
             cond = {"positive": cond["positive"], "negative": cond["negative"],
                     "used_guides_or_inplace": cond.get("used_guides_or_inplace", False),
-                    "video_latent_frames": cond.get("video_latent_frames")}
+                    "video_latent_frames": cond.get("video_latent_frames"),
+                    "ctx_latent_frames": cond.get("ctx_latent_frames", 0)}
 
         # ── Crop -> AV split -> optional upscale (+polish) -> decode ─────
         images, audio = ssamp.finish_pipeline(
             spec, models, cond, latent, loaded, gen, up, audio_enabled,
             audio_file=audio_file)
-
-        if io_id and not reuse:
-            with torch.no_grad():
-                _LAST_FRAME[io_id] = images[-1:].detach().clone().cpu()
-            _TAIL_VER[io_id] = _TAIL_VER.get(io_id, 0) + 1
 
         video = ssamp.to_video(images, gen.get("fps", spec["fps_default"]), audio)
 

@@ -1,5 +1,5 @@
 """
-Video Oasis Viewer — HTTP routes for the scene bar / clip / create-movie tools.
+Video Oasis Viewer -- HTTP routes for the scene bar / clip / create-movie tools.
 
 Moved out of LTX2.3 Oasis so the standalone Video Oasis Viewer owns the
 full preview toolkit. LTX may keep thin aliases until the repos are merged.
@@ -154,7 +154,7 @@ _MOVIE_PREFIX = "create_movie_"
 
 
 def _next_movie_path():
-    """Pick output/video/create_movie_NNNNN.mp4 — the smallest unused N ≥ 1."""
+    """Pick output/video/create_movie_NNNNN.mp4 -- the smallest unused N ≥ 1."""
     out_root = folder_paths.get_output_directory()
     video_dir = os.path.join(out_root, "video")
     os.makedirs(video_dir, exist_ok=True)
@@ -253,7 +253,7 @@ def _stream_copy_viable(probes):
     """True only when every clip shares codec + SPS/PPS (extradata).
 
     Clipped re-encodes often share h264/size/fps with the originals but
-    different extradata — stream-copy then corrupts after the first cut.
+    different extradata -- stream-copy then corrupts after the first cut.
     """
     if not probes:
         return False
@@ -299,7 +299,6 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
                 path = probe["path"]
                 with av.open(path) as in_c:
                     v_in = next(s for s in in_c.streams if s.type == "video")
-                    a_in = next((s for s in in_c.streams if s.type == "audio"), None)
 
                     first_pts = None
                     last_end = 0
@@ -319,22 +318,30 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
                         out.mux(packet)
                     v_pts_offset = last_end if last_end > 0 else v_pts_offset
 
-                    if a_out is not None:
-                        if a_in is not None:
+                # Audio needs its own container handle: the demux loop above
+                # runs `in_c` to EOF and PyAV does not rewind, so decoding
+                # audio from that same handle yields zero frames -- an aac
+                # stream is declared, never fed, and the movie is silent.
+                # _reencode_concat already opens a second handle for this
+                # reason; the stream-copy path did not.
+                if a_out is not None:
+                    if probe["has_audio"]:
+                        with av.open(path) as in_a:
+                            a_in = next(s for s in in_a.streams if s.type == "audio")
                             resampler = av.AudioResampler(
                                 format="fltp",
                                 layout=out_audio_params["layout"],
                                 rate=out_audio_params["rate"],
                             )
-                            for frame in in_c.decode(a_in):
+                            for frame in in_a.decode(a_in):
                                 for out_frame in (resampler.resample(frame) or []):
                                     out_frame.pts = a_pts
                                     a_pts += out_frame.samples
                                     for pkt in a_out.encode(out_frame):
                                         out.mux(pkt)
-                        else:
-                            a_pts = _emit_silence(
-                                out, a_out, probe["duration_s"], a_pts)
+                    else:
+                        a_pts = _emit_silence(
+                            out, a_out, probe["duration_s"], a_pts)
 
             if a_out is not None:
                 for pkt in a_out.encode(None):
@@ -352,7 +359,7 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
 
 
 def _reencode_concat(input_paths, output_path, use_audio, probes=None):
-    """Decode/re-encode concat — safe for mixed originals + Clip outputs."""
+    """Decode/re-encode concat -- safe for mixed originals + Clip outputs."""
     import av
     from fractions import Fraction
     probes, ref = (probes, probes[0]) if probes else _probe_movie_inputs(input_paths)
@@ -461,7 +468,7 @@ async def vo_create_movie(request):
 
     # Resolve every entry to an absolute path under output/. Any that
     # can't be resolved (moved / deleted since the strip was populated)
-    # abort the whole operation — a partial movie would be confusing.
+    # abort the whole operation -- a partial movie would be confusing.
     out_root = folder_paths.get_output_directory()
     paths = []
     for e in entries:
@@ -504,9 +511,15 @@ async def vo_create_movie(request):
         return web.json_response(
             {"error": f"Concat failed: {e}"}, status=500)
 
+    # filename/subfolder are split out (not just the joined rel_path) so the
+    # frontend can hand the finished movie straight to loadExternalVideo and
+    # have it land in the scene bar, exactly the way Clip already does.
+    subfolder, _, filename = rel_path.rpartition("/")
     return web.json_response({
         "ok": True,
         "path": rel_path,
+        "filename": filename,
+        "subfolder": subfolder,
         "size_bytes": info["size_bytes"],
         "duration_s": info["duration_s"],
     })
@@ -516,7 +529,7 @@ _CLIP_PREFIX = "clip_"
 
 
 def _next_clip_path():
-    """Pick output/video/clip_NNNNN.mp4 — smallest unused N ≥ 1."""
+    """Pick output/video/clip_NNNNN.mp4 -- smallest unused N ≥ 1."""
     out_root = folder_paths.get_output_directory()
     video_dir = os.path.join(out_root, "video")
     os.makedirs(video_dir, exist_ok=True)

@@ -93,7 +93,7 @@ def unload_enhancer_if_loaded():
     reload cycle. Routes_enhance is loaded under a fixed sys.modules key by
     __init__.py — look it up there to avoid relative-import fragility.
 
-    Called from nodes.py before the diffusion cache check, so it fires on
+    Called from nodes_image.py before the diffusion cache check, so it fires on
     every generation regardless of whether load_models() runs."""
     m = sys.modules.get("image_oasis_routes_enhance")
     if m is None:
