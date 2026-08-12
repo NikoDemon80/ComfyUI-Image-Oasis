@@ -1,12 +1,22 @@
-# LTX2.3 Oasis 🌴
+# LTX Oasis 🌴
 
 Everything works like Image Oasis. If you know IO, you already know this node. This page covers the video-specific parts and the reasoning behind the defaults.
 
 ## Quick start
 
-1. **Model**: pick Diffusion or GGUF, select your LTX 2.3 model, both text encoders (Gemma-3 + text projection), and the video VAE. For sound, pick the audio VAE here and set **Audio** under Video / Audio to *Generate* (or *File* to drive the video from your own audio track).
+1. **Model**: pick your architecture (LTX 2.3 or LTX 2.5), then Diffusion or GGUF, the model, its text encoder(s), and the video VAE. For sound, pick the audio VAE here and set **Audio** under Video / Audio to *Generate* (or *File* to drive the video from your own audio track).
 2. **Prompt Enhancer**: Text → Video / Image → Video at the top sets both the pipeline and the enhancer style. Short idea in User Prompt, ✨ Enhance to expand it, or write straight into the Enhanced Prompt box. Negative Prompt sits under Enhance (same order as IO).
 3. Press **▶** (keep seed) or **🎲** (randomize + generate) above the render pane. The timer runs while it cooks; **⏹** interrupts. Every render lands in the scene bar; click any thumbnail to bring it back.
+
+## Architecture: 2.3 or 2.5
+
+Both are the 22B distilled model and both run through the same pipeline. The differences that matter when you switch:
+
+- **Text encoders.** 2.3 takes two (Gemma-3 plus the LTX text projection). 2.5 takes **one** - it ships Gemma-4-12B with the projection already baked into the file. The Model section changes its picker count to match, so just follow the UI. This is not a shortcut you can skip: giving the combined 2.5 file to a two-slot loader builds a mismatched encoder and dies with an unpack error.
+- **Defaults.** 2.5 opens at 24 fps and 960×544; 2.3 at 25 fps and 1280×720. Both are 121 frames on the same 8n+1 grid.
+- **Spatial Upsample.** 2.5 has no upscaler of its own yet, so it loads the 2.3 one - which is exactly what the official 2.5 two-stage workflow does.
+
+Sigmas, sampler and CFG are the same on both. Prompt Beats, guides, audio, motion context, the player and the scene bar all behave identically. The node keeps its name and class id whichever you pick, so old workflows still load.
 
 ## LoRAs
 
@@ -84,7 +94,7 @@ Tips: 2-3 beats for a 5-second clip is plenty; beats describe *actions*, not new
 
 ## Generation
 
-LTX 2.3 distilled samples on a fixed **sigma schedule** instead of a step count. The default list is the known-good template schedule (9 values ≈ 8 steps). Fewer values = faster and rougher; you can hand-edit the list. The ↺ button next to Sigmas restores the arch default. CFG stays at 1 for distilled models; raising it roughly doubles the time per step for usually-marginal benefit.
+The distilled LTX models sample on a fixed **sigma schedule** instead of a step count. The default list is the known-good template schedule (9 values ≈ 8 steps). Fewer values = faster and rougher; you can hand-edit the list. The ↺ button next to Sigmas restores the arch default. CFG stays at 1 for distilled models; raising it roughly doubles the time per step for usually-marginal benefit.
 
 **Negative prompt** works in both regimes, through different plumbing. At CFG > 1 (base model territory) it's standard classifier-free guidance. At CFG 1 the sampler never runs an unconditional pass, so the node automatically routes the negative through **NAG** (Normalized Attention Guidance, KJNodes' LTX2 NAG; ComfyUI-KJNodes must be installed) which injects it directly into cross-attention. Leave the box empty and neither path activates.
 
@@ -92,7 +102,7 @@ Seed handling is IO's: the ▶/🎲 pair by the seed field and on the header, pl
 
 ## Upscale: Spatial Upsample (×2)
 
-Runs the LTX 2× latent upsampler after the main sample. **Polish pass** additionally re-samples at the upscaled resolution: much sharper, but it runs the full diffusion model at 4× the tokens, so it's heavy (its re-noise sigma list is editable; ↺ resets it; fewer/lower values = subtler and faster). Off = upsample-only: fast, slightly softer. The sampled video is cached, so toggling Upscale re-runs only the upsample + decode, not the generation.
+Runs the LTX 2× latent upsampler after the main sample (2.5 runs the 2.3 upscaler, as its own reference workflow does). **Polish pass** additionally re-samples at the upscaled resolution: much sharper, but it runs the full diffusion model at 4× the tokens, so it's heavy (its re-noise sigma list is editable; ↺ resets it; fewer/lower values = subtler and faster). Off = upsample-only: fast, slightly softer. The sampled video is cached, so toggling Upscale re-runs only the upsample + decode, not the generation.
 
 Off by default for two reasons: with a reference image active it can drift your subject's likeness, and the half-resolution-render + supersample route usually looks better anyway.
 
@@ -111,6 +121,8 @@ The **scene bar** keeps up to 48 renders, one click away, surviving tab switches
 ### 🎬 Create Movie
 
 Concatenates every **saved** clip in the scene bar (left to right) into one file at `output/video/create_movie_NNNNN.mp4`. Clips must match resolution and FPS. When every clip shares the same bitstream params, video is stream-copied (lossless). If any clip differs (common after Clip, which re-encodes), the movie is re-encoded so the join stays clean. The 🔊/🔇 toggle controls audio: on, audio is re-encoded to AAC and silent clips get silence so the timeline stays aligned; off, the movie is silent.
+
+Audio across the joins is rebuilt rather than blindly concatenated: each clip's track is trimmed to exactly the length its frame count calls for (removing the AAC tail padding that used to drop a short hole into continuous ambience, and stopping audio from walking late against picture down a long bar), and the samples either side of each cut are crossfaded so the splice cannot click. Details land in the ComfyUI console under `[LTXO Movie]`.
 
 The finished movie is added to the scene bar as a saved entry, so you can play it back immediately. It is not excluded from the next Create Movie: concatenating a movie with further clips is how you build runs longer than the bar holds. Remove what you don't want with a thumbnail's X first.
 

@@ -1,0 +1,5 @@
+# Frontend scripts ship with CRLF endings. Pinning this stops the suite's
+# .js files drifting apart depending on which editor or machine last
+# touched them. Nothing else is pinned: the repo's other file types have
+# mixed endings by history and normalizing them would churn every file.
+*.js text eol=crlf

@@ -62,6 +62,10 @@ right) into `output/video/create_movie_NNNNN.mp4`.
   stays clean
 - 🔊/🔇 toggle: with audio on, tracks are aligned (silence padded where needed);
   off = silent movie
+- Audio across each join is rebuilt, not blindly concatenated: clips are
+  trimmed to their own frame count (no AAC tail padding leaking in as a gap,
+  no drift down a long bar) and the samples either side of the cut are
+  crossfaded. Per-clip details print to the console under `[VOV Movie]`
 - The movie lands in the scene bar as a saved entry, and is **not** excluded
   from the next Create Movie - concatenating a movie with further clips is how
   you build runs longer than the bar holds. Remove what you don't want with a
@@ -69,7 +73,7 @@ right) into `output/video/create_movie_NNNNN.mp4`.
 
 ## Encode / Save
 
-One collapsible section (same layout as LTX2.3 Oasis), with the square **💾 Save**
+One collapsible section (same layout as LTX Oasis), with the square **💾 Save**
 button beside the section header. Controls live in the node UI (serialized with
 the widget, not as separate Comfy widgets):
 
@@ -86,7 +90,7 @@ in-browser; the file on disk is fine.
 
 ## Theme
 
-Palette follows **LTX2.3 Oasis** (companion node). Edit colors in LTXO's Theme
+Palette follows **LTX Oasis** (companion node). Edit colors in LTXO's Theme
 section; Video Oasis Viewer picks them up automatically.
 
 ## Multi-node / API
@@ -94,7 +98,7 @@ section; Video Oasis Viewer picks them up automatically.
 Each viewer instance keeps a stable `io_id` inside the `video_oasis_ui` widget
 JSON so scene-bar and save routes target the right pane when several viewers
 are on the graph. HTTP routes live under `/video_oasis/*` (list, probe, save,
-clip, create-movie, frame extraction). LTX2.3 Oasis shares the save and
+clip, create-movie, frame extraction). LTX Oasis shares the save and
 frame-extraction routes.
 
 ## License

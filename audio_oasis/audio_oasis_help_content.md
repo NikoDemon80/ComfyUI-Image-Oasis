@@ -1,6 +1,6 @@
 # Audio Oasis Help 🌴
 
-Load a track, chop it into segments on the waveform, save them as numbered files, and feed the result to LTX2.3 Oasis's audio-driven-video slot or any other AUDIO-input node.
+Load a track, chop it into segments on the waveform, save them as numbered files, and feed the result to LTX Oasis's audio-driven-video slot or any other AUDIO-input node.
 
 ---
 
@@ -31,9 +31,9 @@ The **waveform strip** (waveform, scrub bar, transport, and split tools) runs fu
 
 ## 🎛️ Grid & Snap
 
-LTX 2.3 only accepts clips whose frame count is **8n+1** (9, 17, 25, 33, ...). This section keeps your chops legal.
+LTX only accepts clips whose frame count is **8n+1** (9, 17, 25, 33, ...) - the same grid on 2.3 and 2.5. This section keeps your chops legal.
 
-- **FPS** - the frame rate the chop grid is quantized to. Match it to your video pipeline's FPS (25 for the standard LTX setup).
+- **FPS** - the frame rate the chop grid is quantized to. Match it to your video pipeline's FPS (25 for LTX 2.3, 24 for LTX 2.5).
 - **Snap: 8n+1 (LTX)** - locks every chop point so every segment's frame count stays 8n+1. This is the default and the right mode when the segments feed LTX.
 - **Snap: frames** - locks points to whole frames without the 8n+1 rule.
 - **Snap: off** - free positioning in seconds.
@@ -45,7 +45,7 @@ The last segment usually is not 8n+1 - the track just ends where it ends. The se
 
 ## 🔍 Analysis
 
-**Analyze** estimates BPM and musical key. It needs `librosa` on the backend (optional dependency; see the root `requirements.txt`). The first run after a ComfyUI restart takes 10-30 seconds while librosa warms up; after that it is fast. Everything else in the node works without librosa.
+**Analyze** estimates BPM and musical key. It needs `librosa`, which is not installed by default: `pip install librosa` (or uncomment it in the root `requirements.txt`) and restart ComfyUI. The first run after a ComfyUI restart takes 10-30 seconds while librosa warms up; after that it is fast. Everything else in the node works without librosa.
 
 ---
 
@@ -55,9 +55,9 @@ The last segment usually is not 8n+1 - the track just ends where it ends. The se
 
 - **Click a segment row** to make it the node's AUDIO output.
 - **Click Use full track as output** to send the whole track instead.
-- **Drag a saved segment's grip** (⋮⋮) straight onto LTX2.3 Oasis's audio slot - no upload step, no wire.
+- **Drag a saved segment's grip** (⋮⋮) straight onto LTX Oasis's audio slot - no upload step, no wire.
 
-> 💡 You can drag a saved segment chip onto **any** node that accepts a file drop, not just LTX2.3 Oasis.
+> 💡 You can drag a saved segment chip onto **any** node that accepts a file drop, not just LTX Oasis.
 
 ---
 

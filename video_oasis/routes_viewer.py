@@ -172,33 +172,226 @@ def _next_movie_path():
     return os.path.join(video_dir, filename), f"video/{filename}"
 
 
-def _emit_silence(out_container, audio_stream, seconds, pts_start):
-    """Encode `seconds` of silence into `audio_stream`. Returns new pts.
+# ── Create Movie: audio seam handling ──────────────────────────────────
+
+#
+# Each clip on disk carries its own AAC encode, and an AAC encode always pads
+# the end of the stream out to a whole 1024-sample block. Decoding gives that
+# padding back as real zeros, so a naive concat drops ~23 ms of silence into
+# the middle of continuous ambience at every join. The clip files also come
+# out fractionally longer than their own video, which walks audio late against
+# picture as the clips accumulate. Both go away by cutting each clip's decoded
+# audio to exactly the length its frame count says it should be.
+#
+# That leaves the other half of the artifact: the first ~25 ms of a clip comes
+# in weak (the generator's audio settles over the opening frames), which a trim
+# cannot recover because it is real audio, just quiet. So the samples either
+# side of a join are rebuilt by crossfading between the two clips' own
+# interiors played backwards. Reversed ambience is indistinguishable from
+# forwards ambience, and reversing makes the patch start on the exact sample it
+# replaces, so the splice cannot click. Sample count is unchanged, so sync
+# holds.
+#
+# Cost of the reversal trick: at a join that lands on speech or a distinct
+# musical event, ~36 ms of reversed material may be audible. Widen or narrow
+# via the two constants below.
+
+_SEAM_PRE_MS = 10.0     # rebuilt at the end of the outgoing clip
+_SEAM_POST_MS = 26.0    # rebuilt at the start of the incoming clip
+
+# Diagnostic: Create Movie prints what it did with the audio to the ComfyUI
+# console. Cheap, and the only way to tell a fix that did nothing from a fix
+# that never ran.
+_MV_TAG = "[VOV Movie]"
+
+
+def _mv_log(msg):
+    try:
+        print(f"{_MV_TAG} {msg}", flush=True)
+    except Exception:
+        pass
+
+
+def _decode_clip_audio(path, layout_name, rate):
+    """Decode a clip's whole audio track to float32 (channels, samples).
+
+    Returns None when the file has no audio stream or decodes to nothing.
+    """
+    import av
+    import numpy as np
+    chunks = []
+    with av.open(path) as container:
+        a_in = next((s for s in container.streams if s.type == "audio"), None)
+        if a_in is None:
+            return None
+        resampler = av.AudioResampler(
+            format="fltp", layout=layout_name, rate=rate)
+        for frame in container.decode(a_in):
+            for out_frame in (resampler.resample(frame) or []):
+                chunks.append(out_frame.to_ndarray())
+        # Flushing the resampler matters when rates differ: the tail sits in
+        # its internal buffer and is otherwise dropped. Older PyAV builds
+        # reject a None frame here, hence the guard.
+        try:
+            for out_frame in (resampler.resample(None) or []):
+                chunks.append(out_frame.to_ndarray())
+        except Exception:
+            pass
+    if not chunks:
+        return None
+    return np.concatenate(chunks, axis=1).astype(np.float32, copy=False)
+
+
+def _fit_audio_length(arr, n_target):
+    """Cut or zero-pad to exactly n_target samples.
+
+    Cutting is the point: it removes the AAC block padding at the end of the
+    clip, which is what puts the hole in the join. Padding is only a guard for
+    a clip whose audio genuinely stops early.
+    """
+    import numpy as np
+    if n_target <= 0:
+        return arr[:, :0]
+    n = int(arr.shape[1])
+    if n > n_target:
+        return arr[:, :n_target]
+    if n < n_target:
+        pad = np.zeros((arr.shape[0], n_target - n), dtype=np.float32)
+        return np.concatenate([arr, pad], axis=1)
+    return arr
+
+
+def _repair_seam(a, b, rate, label=""):
+    """Rebuild the samples either side of a join. Returns (a, b) rewritten.
+
+    Builds one continuous block spanning the join out of two donors, each the
+    clip's own clean interior reversed:
+
+      donor_a[0]    is exactly a's last sample before the rebuilt region
+      donor_b[-1]   is exactly b's first sample after the rebuilt region
+
+    so the block joins both neighbours with no amplitude step. An equal-power
+    crossfade carries it from one to the other, which holds level across the
+    join for uncorrelated material such as ambience.
+
+    Left alone when either clip is too short to donate, or when either side is
+    silent (a deliberately quiet clip should stay quiet).
+    """
+    import numpy as np
+    npre = max(1, int(round(_SEAM_PRE_MS * rate / 1000.0)))
+    npost = max(1, int(round(_SEAM_POST_MS * rate / 1000.0)))
+    n = npre + npost
+    len_a, len_b = int(a.shape[1]), int(b.shape[1])
+    if len_a < npre + n or len_b < npost + n:
+        _mv_log(f"  seam {label}: SKIPPED, clip too short to donate "
+                f"(need {npre + n}/{npost + n}, have {len_a}/{len_b})")
+        return a, b
+    if not np.any(a[:, -(npre + n):]) or not np.any(b[:, :npost + n]):
+        _mv_log(f"  seam {label}: SKIPPED, one side is silent")
+        return a, b
+
+    quiet_b = float(np.sqrt(np.mean(b[:, :npost] ** 2)))
+    ref_b = float(np.sqrt(np.mean(b[:, npost:npost + n] ** 2)))
+    _mv_log(f"  seam {label}: repaired {npre}+{npost} samples "
+            f"({_SEAM_PRE_MS:.0f}+{_SEAM_POST_MS:.0f} ms); "
+            f"incoming head was {quiet_b:.5f} vs {ref_b:.5f} just after")
+
+    donor_a = a[:, len_a - npre - n:len_a - npre][:, ::-1]
+    donor_b = b[:, npost:npost + n][:, ::-1]
+    t = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    seam = donor_a * np.sqrt(1.0 - t)[None, :] + donor_b * np.sqrt(t)[None, :]
+
+    a = a.copy()
+    b = b.copy()
+    a[:, len_a - npre:] = seam[:, :npre]
+    b[:, :npost] = seam[:, npre:]
+    return a, b
+
+
+def _encode_audio_array(out_container, audio_stream, arr, pts):
+    """Encode a float32 (channels, samples) array. Returns the new pts.
 
     PTS units are the stream's time_base (samples for typical AAC streams).
-    Frames are float32 planar (fltp) with n_channels rows of zeros.
     """
     import av
     import numpy as np
     codec_ctx = audio_stream.codec_context
-    sample_rate = codec_ctx.sample_rate
     layout_name = codec_ctx.layout.name
-    n_channels = len(codec_ctx.layout.channels)
+    sample_rate = codec_ctx.sample_rate
     frame_size = codec_ctx.frame_size or 1024
-    total = int(round(seconds * sample_rate))
-    pts = pts_start
-    emitted = 0
-    while emitted < total:
-        n = min(frame_size, total - emitted)
-        arr = np.zeros((n_channels, n), dtype=np.float32)
-        frame = av.AudioFrame.from_ndarray(arr, format="fltp", layout=layout_name)
+    total = int(arr.shape[1])
+    i = 0
+    while i < total:
+        block = np.ascontiguousarray(arr[:, i:i + frame_size])
+        frame = av.AudioFrame.from_ndarray(
+            block, format="fltp", layout=layout_name)
         frame.sample_rate = sample_rate
         frame.pts = pts
-        emitted += n
+        n = int(block.shape[1])
         pts += n
+        i += n
         for packet in audio_stream.encode(frame):
             out_container.mux(packet)
     return pts
+
+
+class _AudioSeamWriter:
+    """Encodes clip audio one clip behind, so each join can be repaired.
+
+    A join touches the end of the outgoing clip and the start of the incoming
+    one, so a clip cannot be encoded until its successor has been decoded.
+    Holding one clip back is enough; memory stays at two clips of audio rather
+    than the whole movie.
+    """
+
+    def __init__(self, out_container, audio_stream, rate):
+        self.out = out_container
+        self.stream = audio_stream
+        self.rate = rate
+        self.pending = None
+        self.pts = 0
+        self.index = 0
+
+    def add(self, arr):
+        if self.pending is not None:
+            self.index += 1
+            prev, arr = _repair_seam(
+                self.pending, arr, self.rate, f"{self.index}")
+            self.pts = _encode_audio_array(
+                self.out, self.stream, prev, self.pts)
+        self.pending = arr
+
+    def close(self):
+        if self.pending is not None:
+            self.pts = _encode_audio_array(
+                self.out, self.stream, self.pending, self.pts)
+            self.pending = None
+        for packet in self.stream.encode(None):
+            self.out.mux(packet)
+
+
+def _clip_audio_for_concat(path, has_audio, frames, fps, audio_stream,
+                           layout_name, rate):
+    """Decoded, length-corrected audio for one clip, or synthesized silence.
+
+    Length comes from the clip's own frame count rather than its container
+    duration, so audio and video are measured off the same ruler and no drift
+    accumulates down a long scene bar.
+    """
+    import numpy as np
+    name = os.path.basename(path)
+    n_target = int(round((float(frames) / float(fps)) * rate)) if fps else 0
+    arr = _decode_clip_audio(path, layout_name, rate) if has_audio else None
+    if arr is None:
+        n_channels = len(audio_stream.codec_context.layout.channels)
+        _mv_log(f"  {name}: no audio, {n_target} samples of silence "
+                f"({frames} frames @ {fps:g} fps)")
+        return np.zeros((n_channels, max(0, n_target)), dtype=np.float32)
+    n_dec = int(arr.shape[1])
+    _mv_log(f"  {name}: {frames} frames @ {fps:g} fps -> want {n_target}, "
+            f"decoded {n_dec}, trimming {n_dec - n_target:+d} "
+            f"({(n_dec - n_target) / float(rate) * 1000.0:+.1f} ms)")
+    return _fit_audio_length(arr, n_target)
 
 
 def _probe_movie_inputs(input_paths):
@@ -226,11 +419,15 @@ def _probe_movie_inputs(input_paths):
                 fps_frac = Fraction(25, 1)
             fps = float(fps_frac)
             duration_s = (float(c.duration) / 1_000_000.0) if c.duration else 0.0
+            # Audio is trimmed to frames/fps, so the frame count has to come
+            # along. v.frames is 0 on streams that do not advertise it.
+            frames = int(v.frames) if v.frames \
+                else max(0, int(round(duration_s * fps)))
             extradata = bytes(v.codec_context.extradata or b"")
             probe = {
                 "path": p, "width": width, "height": height,
                 "codec": codec, "fps": fps, "fps_frac": fps_frac,
-                "duration_s": duration_s,
+                "duration_s": duration_s, "frames": frames,
                 "has_audio": a is not None,
                 "audio_rate": (a.codec_context.sample_rate if a else 0),
                 "audio_layout": (a.codec_context.layout.name if a else ""),
@@ -288,12 +485,13 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
             else:
                 v_out = out.add_stream(template=tmpl_v)
             a_out = None
+            seam = None
             if out_audio_params:
                 a_out = out.add_stream("aac", rate=out_audio_params["rate"])
                 a_out.layout = out_audio_params["layout"]
+                seam = _AudioSeamWriter(out, a_out, out_audio_params["rate"])
 
             v_pts_offset = 0
-            a_pts = 0
 
             for probe in probes:
                 path = probe["path"]
@@ -318,34 +516,18 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
                         out.mux(packet)
                     v_pts_offset = last_end if last_end > 0 else v_pts_offset
 
-                # Audio needs its own container handle: the demux loop above
-                # runs `in_c` to EOF and PyAV does not rewind, so decoding
-                # audio from that same handle yields zero frames -- an aac
-                # stream is declared, never fed, and the movie is silent.
-                # _reencode_concat already opens a second handle for this
-                # reason; the stream-copy path did not.
-                if a_out is not None:
-                    if probe["has_audio"]:
-                        with av.open(path) as in_a:
-                            a_in = next(s for s in in_a.streams if s.type == "audio")
-                            resampler = av.AudioResampler(
-                                format="fltp",
-                                layout=out_audio_params["layout"],
-                                rate=out_audio_params["rate"],
-                            )
-                            for frame in in_a.decode(a_in):
-                                for out_frame in (resampler.resample(frame) or []):
-                                    out_frame.pts = a_pts
-                                    a_pts += out_frame.samples
-                                    for pkt in a_out.encode(out_frame):
-                                        out.mux(pkt)
-                    else:
-                        a_pts = _emit_silence(
-                            out, a_out, probe["duration_s"], a_pts)
+                # Audio is decoded from its own container handle: the demux
+                # loop above runs `in_c` to EOF and PyAV does not rewind, so
+                # decoding audio from that same handle yields zero frames -- an
+                # aac stream is declared, never fed, and the movie is silent.
+                if seam is not None:
+                    seam.add(_clip_audio_for_concat(
+                        path, probe["has_audio"], probe["frames"],
+                        probe["fps"], a_out,
+                        out_audio_params["layout"], out_audio_params["rate"]))
 
-            if a_out is not None:
-                for pkt in a_out.encode(None):
-                    out.mux(pkt)
+            if seam is not None:
+                seam.close()
 
     try:
         size_bytes = int(os.path.getsize(output_path))
@@ -393,13 +575,15 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
             pass
 
         a_out = None
+        seam = None
         if out_audio_params:
             a_out = out.add_stream("aac", rate=out_audio_params["rate"])
             a_out.layout = out_audio_params["layout"]
+            seam = _AudioSeamWriter(out, a_out, out_audio_params["rate"])
 
         v_pts = 0
-        a_pts = 0
         for probe in probes:
+            written = 0
             with av.open(probe["path"]) as in_c:
                 v_in = next(s for s in in_c.streams if s.type == "video")
                 for frame in in_c.decode(v_in):
@@ -408,30 +592,22 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
                     out_frame.pts = v_pts
                     out_frame.time_base = v_tb
                     v_pts += 1
+                    written += 1
                     for pkt in v_out.encode(out_frame):
                         out.mux(pkt)
-            if a_out is not None and probe["has_audio"]:
-                with av.open(probe["path"]) as in_a:
-                    a_in = next(s for s in in_a.streams if s.type == "audio")
-                    resampler = av.AudioResampler(
-                        format="fltp",
-                        layout=out_audio_params["layout"],
-                        rate=out_audio_params["rate"],
-                    )
-                    for frame in in_a.decode(a_in):
-                        for out_frame in (resampler.resample(frame) or []):
-                            out_frame.pts = a_pts
-                            a_pts += out_frame.samples
-                            for pkt in a_out.encode(out_frame):
-                                out.mux(pkt)
-            elif a_out is not None:
-                a_pts = _emit_silence(out, a_out, probe["duration_s"], a_pts)
+            if seam is not None:
+                # Length off the frames actually written, not the probe: a
+                # container that under-reports its frame count would otherwise
+                # leave audio and video on different rulers.
+                seam.add(_clip_audio_for_concat(
+                    probe["path"], probe["has_audio"],
+                    written or probe["frames"], ref["fps"], a_out,
+                    out_audio_params["layout"], out_audio_params["rate"]))
 
         for pkt in v_out.encode(None):
             out.mux(pkt)
-        if a_out is not None:
-            for pkt in a_out.encode(None):
-                out.mux(pkt)
+        if seam is not None:
+            seam.close()
 
     try:
         size_bytes = int(os.path.getsize(output_path))
@@ -449,9 +625,17 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
 def _concat_movie(input_paths, output_path, use_audio):
     """Create Movie entry: stream-copy when safe, otherwise re-encode."""
     probes, _ref = _probe_movie_inputs(input_paths)
-    if _stream_copy_viable(probes):
-        return _stream_copy_concat(input_paths, output_path, use_audio, probes)
-    return _reencode_concat(input_paths, output_path, use_audio, probes)
+    copy_ok = _stream_copy_viable(probes)
+    _mv_log(f"seam-repair build: {len(probes)} clips, "
+            f"audio={'on' if use_audio else 'OFF'}, "
+            f"path={'stream_copy' if copy_ok else 'reencode'} "
+            f"-> {os.path.basename(output_path)}")
+    if copy_ok:
+        info = _stream_copy_concat(input_paths, output_path, use_audio, probes)
+    else:
+        info = _reencode_concat(input_paths, output_path, use_audio, probes)
+    _mv_log("done")
+    return info
 
 
 @routes.post("/video_oasis/create_movie")

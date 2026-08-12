@@ -1,5 +1,78 @@
 # Changelog
 
+## v1.7.0
+
+LTX 2.5 support and a rebuild of Create Movie's audio handling. Class ids are
+unchanged: `ImageOasis`, `VideoOasisPreview`, `LTX23Oasis`, `AudioOasis`.
+
+### LTX Oasis
+
+#### Added
+- **LTX 2.5 22B (Distilled)** as a second architecture in the picker. One
+  registry entry, no new node and no new class id - the node keeps the
+  `LTX23Oasis` id and the dropdown chooses which model family a run targets.
+- 2.5 takes a **single text encoder**. It ships Gemma-4-12B with the LTX
+  projection already baked into one file, where 2.3 needs Gemma-3 plus a
+  separate projection file. The Model section drops to one text-encoder picker
+  when 2.5 is selected. This is load-bearing rather than cosmetic: feeding the
+  combined file to a two-slot loader builds a mismatched encoder and dies
+  inside `sd1_clip` with an unpack error.
+- 2.5 defaults follow its reference workflow: 24 fps and 960x544x121, against
+  2.3's 25 fps and 1280x720x121. The sigma schedule, sampler and CFG are
+  byte-identical to 2.3, verified against the official single-stage and
+  two-stage 2.5 workflows.
+
+#### Changed
+- The node header now reads **LTX Oasis** instead of LTX2.3 Oasis, since the
+  node is no longer 2.3-only. Display name only: the class id stays
+  `LTX23Oasis`, the folder stays `ltx23_oasis/`, routes stay `/ltx23_oasis/*`,
+  and presets and themes stay under `user/ltx23_oasis/`. Saved workflows keep
+  working, and any node you renamed by hand keeps your title.
+
+#### Notes
+- Frame quantum, PromptRelay, Prompt Beats, guides, audio modes, motion
+  context and the whole player/scene-bar toolkit work the same on 2.5 as on
+  2.3. Both use the same 8x temporal compression and 8n+1 frame grid.
+- 2.5 has no spatial upscaler of its own yet. Selecting **Spatial Upsample**
+  on a 2.5 run loads the 2.3 upscaler, which is what the official two-stage
+  2.5 workflow does. Still OFF by default, same identity-drift reason as 2.3.
+
+---
+
+### Create Movie (Video Oasis Viewer and LTX Oasis)
+
+#### Fixed
+- **The gap in the audio at every join.** Each clip on disk carries its own
+  AAC encode, and an AAC encode pads the end of the stream out to a whole
+  1024-sample block. Decoding hands that padding back as real zeros, so
+  concatenating dropped roughly 23ms of silence into the middle of continuous
+  ambience at every cut. Each clip's audio is now trimmed to exactly the
+  length its own frame count calls for.
+- **Audio drifting late against picture down a long scene bar.** Clip files
+  come out fractionally longer than their own video, and the error accumulated
+  across every join because audio length was read from the container duration.
+  Length now comes from frames divided by fps, so audio and video are measured
+  off the same ruler.
+- **The weak opening on the incoming clip.** A generator's audio settles over
+  the first few frames, which a trim cannot fix because it is real audio, just
+  quiet. The samples either side of a join are rebuilt by crossfading the two
+  clips' own interiors played backwards - reversed ambience is
+  indistinguishable from forwards ambience, and reversing makes the patch
+  start on the exact sample it replaces, so the splice cannot click. Sample
+  count is unchanged, so sync holds.
+
+#### Notes
+- At a join landing on speech or a distinct musical event, roughly 36ms of
+  reversed material may be audible. Widen or narrow it with `_SEAM_PRE_MS` and
+  `_SEAM_POST_MS` at the top of the Create Movie section.
+- Seam repair is skipped, not forced, when a clip is too short to donate
+  samples or when either side of the join is silent - a deliberately quiet
+  clip stays quiet.
+- Create Movie now prints what it did to each clip's audio to the ComfyUI
+  console, tagged `[VOV Movie]` or `[LTXO Movie]`.
+
+---
+
 ## v1.6.0
 
 Motion context for chained LTX clips, plus a fourth node. Class ids stay

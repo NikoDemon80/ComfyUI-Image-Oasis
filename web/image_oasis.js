@@ -1170,7 +1170,7 @@ app.registerExtension({
         <div class="io-row">
           <button class="io-btn" data-theme-reset style="margin-top:0;flex:1">Reset to default</button>
         </div>
-        <div class="io-mini" style="opacity:.7">Image Oasis keeps its own palette. Edits preview live across every Image Oasis node and do not affect LTX2.3 Oasis or Audio Oasis. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>
+        <div class="io-mini" style="opacity:.7">Image Oasis keeps its own palette. Edits preview live across every Image Oasis node and do not affect LTX Oasis or Audio Oasis. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>
       `);
 
       // Help section (item 2). Renders help_content.md fetched from the

@@ -1,27 +1,48 @@
-# LTX2.3 Oasis
+# LTX Oasis
 
 Part of the **Oasis Suite**. Node class id: `LTX23Oasis`.
 Frontend: [`../web/ltx23_oasis.js`](../web/ltx23_oasis.js). Suite overview:
 [root README](../README.md).
 
-All-in-one LTX 2.3 video generation in the Image Oasis UI shape. Encode, player,
-scene bar, Clip, Create Movie, and Save go through the in-pack
-**Video Oasis Viewer** path - you do not need a separate video pack.
+All-in-one LTX video generation in the Image Oasis UI shape, covering **LTX 2.3
+and LTX 2.5**. Encode, player, scene bar, Clip, Create Movie, and Save go
+through the in-pack **Video Oasis Viewer** path - you do not need a separate
+video pack.
 
 In-node Help is the same text as [`ltx23_oasis_help_content.md`](ltx23_oasis_help_content.md).
 
 ## Quick start
 
-1. **Model**: pick Diffusion or GGUF, select your LTX 2.3 model, both text
-   encoders (Gemma-3 + text projection), and the video VAE. For sound, pick the
-   audio VAE and set **Audio** under Video / Audio to *Generate* (or *File* to
-   drive the video from your own track).
+1. **Model**: pick your architecture (see below), then Diffusion or GGUF, the
+   model, its text encoder(s), and the video VAE. For sound, pick the audio VAE
+   and set **Audio** under Video / Audio to *Generate* (or *File* to drive the
+   video from your own track).
 2. **Prompt Enhancer**: Text → Video / Image → Video at the top sets both the
    pipeline and the enhancer style. Short idea in User Prompt, ✨ Enhance to
    expand it, or write straight into the Enhanced Prompt box. Negative Prompt
    sits under Enhance (same order as Image Oasis).
 3. Press **▶** (keep seed) or **🎲** (randomize + generate). Every render lands
    in the scene bar; click any thumbnail to bring it back.
+
+## Architectures
+
+| | LTX 2.3 22B (Distilled) | LTX 2.5 22B (Distilled) |
+|---|---|---|
+| Text encoders | 2 - Gemma-3 + LTX text projection | 1 - Gemma-4-12B, projection baked in |
+| Default fps | 25 | 24 |
+| Default size | 1280x720x121 | 960x544x121 |
+| Spatial Upsample | own x2 upscaler | borrows the 2.3 upscaler |
+
+The **single text encoder on 2.5 is required, not a shortcut**: its file
+already contains the projection, so handing it to a two-slot loader builds a
+mismatched encoder and fails inside `sd1_clip` with an unpack error. The Model
+section drops to one text-encoder picker when you select 2.5, so following the
+UI keeps you right.
+
+Sigmas, sampler and CFG are identical across the two, as are the frame quantum
+(8n+1), PromptRelay, Prompt Beats, guides, audio modes, motion context and the
+player/scene-bar toolkit. The node keeps the `LTX23Oasis` class id whichever
+you pick, so existing workflows load unchanged.
 
 ## Dependencies
 
@@ -110,7 +131,8 @@ sampling and never appear literally in the output.
 - **Width / Height**: multiples of 32; ratio lock, ↔ swap, ⤢ use-size snap.
   Sweet spot with a reference: render at **half** the source resolution.
 - **Frames**: LTX grid (8n+1). ≈ seconds updates live.
-- **FPS**: playback rate of the encoded file (native rhythm is 25).
+- **FPS**: playback rate of the encoded file (native rhythm is 25 on 2.3, 24
+  on 2.5).
 - **Cond. FPS**: how fast the model *thinks* time passes; `0` = follow FPS.
 - **Audio** (needs Audio VAE when not Off):
   - **Off** - silent
@@ -119,8 +141,9 @@ sampling and never appear literally in the output.
 
 ## Generation
 
-LTX 2.3 distilled uses a fixed **sigma schedule** (default ~9 values ≈ 8 steps).
-↺ restores the arch default. CFG stays at 1 for distilled models.
+The distilled LTX models use a fixed **sigma schedule** (default ~9 values ≈ 8
+steps), the same list on 2.3 and 2.5. ↺ restores the arch default. CFG stays at
+1 for distilled models.
 
 **Negative prompt**: at CFG > 1, standard CFG; at CFG 1 the node routes through
 **NAG** (KJNodes LTX2 NAG). Empty negative = neither path.
@@ -152,9 +175,15 @@ Same toolkit as [Video Oasis Viewer](../video_oasis/video_oasis_README.md):
 Concatenates every **saved** scene-bar clip into
 `output/video/create_movie_NNNNN.mp4`. Stream-copy when params match;
 re-encode when needed (common after Clip). Audio toggle pads silence so the
-timeline stays aligned. The movie lands back in the scene bar as a saved entry
-and is **not** excluded from the next Create Movie, so movie-plus-clips is how
-you build runs longer than the bar holds.
+timeline stays aligned. Audio across each join is rebuilt rather than blindly
+concatenated: every clip is trimmed to exactly the length its own frame count
+calls for (no AAC tail padding leaking in as a gap, no drift down a long bar)
+and the samples either side of the cut are crossfaded. Per-clip detail prints
+to the console under `[LTXO Movie]`.
+
+The movie lands back in the scene bar as a saved entry and is **not** excluded
+from the next Create Movie, so movie-plus-clips is how you build runs longer
+than the bar holds.
 
 ## Encode
 

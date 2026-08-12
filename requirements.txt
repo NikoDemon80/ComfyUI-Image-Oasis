@@ -17,7 +17,7 @@ spandrel
 spandrel-extra-arches
 
 # Prompt enhancer ("magic wand") - local GGUF LLM that expands short prompts
-# (Image Oasis and LTX2.3 Oasis). NOT enabled by default: the CUDA-accelerated
+# (Image Oasis and LTX Oasis). NOT enabled by default: the CUDA-accelerated
 # install is toolkit-specific (cu121 / cu122 / cu124 / etc.) and a plain
 # `pip install` lands the CPU-only wheel, which is much slower. See
 # image_oasis/image_oasis_README.md "Prompt enhancer setup" for the install
@@ -38,11 +38,11 @@ spandrel-extra-arches
 # ---------------------------------------------------------------------------
 #
 #   ComfyUI-GGUF
-#     Required for the GGUF source type on Image Oasis and LTX2.3 Oasis.
+#     Required for the GGUF source type on Image Oasis and LTX Oasis.
 #     Checkpoint / diffusion (safetensors) sources work without it.
 #
 #   ComfyUI-KJNodes
-#     Optional for LTX2.3 Oasis. Needed for LTX2 NAG (Normalized Attention
+#     Optional for LTX Oasis. Needed for LTX2 NAG (Normalized Attention
 #     Guidance) so negative prompts work when CFG is 1 (distilled LTX).
 #     Without it, distilled runs with an empty negative still work; a
 #     non-empty negative at CFG 1 will error until KJNodes is installed.

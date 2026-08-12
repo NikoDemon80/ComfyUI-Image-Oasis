@@ -252,7 +252,7 @@ class LTX23Oasis:
     FUNCTION = "generate"
     OUTPUT_NODE = True
     CATEGORY = "video"
-    DESCRIPTION = ("All-in-one LTX 2.3 video generation — model loading, "
+    DESCRIPTION = ("All-in-one LTX 2.3 / 2.5 video generation — model loading, "
                    "LoRAs, Start Frame, Prompt Beats (PromptRelay + "
                    "keyframe guides), audio, generation, optional spatial "
                    "upscale, and the in-node player.")
@@ -469,5 +469,5 @@ NODE_CLASS_MAPPINGS = {
     "LTX23Oasis": LTX23Oasis,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "LTX23Oasis": "LTX2.3 Oasis \U0001f334",
+    "LTX23Oasis": "LTX Oasis \U0001f334",
 }

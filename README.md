@@ -8,12 +8,58 @@ habits, and UI patterns. Install once; everything lands under
 |------|----------|--------|------|
 | **Image Oasis** | `ImageOasis` | `image_oasis/` | [image_oasis/image_oasis_README.md](image_oasis/image_oasis_README.md) |
 | **Video Oasis Viewer** | `VideoOasisPreview` | `video_oasis/` | [video_oasis/video_oasis_README.md](video_oasis/video_oasis_README.md) |
-| **LTX2.3 Oasis** | `LTX23Oasis` | `ltx23_oasis/` | [ltx23_oasis/ltx23_oasis_README.md](ltx23_oasis/ltx23_oasis_README.md) |
+| **LTX Oasis** | `LTX23Oasis` | `ltx23_oasis/` | [ltx23_oasis/ltx23_oasis_README.md](ltx23_oasis/ltx23_oasis_README.md) |
 | **Audio Oasis** | `AudioOasis` | `audio_oasis/` | [audio_oasis/audio_oasis_README.md](audio_oasis/audio_oasis_README.md) |
 
 Frontends live in `web/` (`image_oasis.js`, `video_oasis.js`, `ltx23_oasis.js`,
 `audio_oasis.js`).
 **License: GPL-3.0-or-later** for the whole pack (see [LICENSE](LICENSE)).
+
+---
+
+## What's new in 1.7
+
+### LTX 2.5 (LTX Oasis)
+
+The architecture picker gains **LTX 2.5 22B (Distilled)** alongside 2.3. It is
+one registry entry rather than a new node, so the class id stays `LTX23Oasis`
+and existing workflows are untouched - the dropdown decides which model family
+a run targets.
+
+The one thing to know when switching: 2.5 takes a **single text encoder**. It
+ships Gemma-4-12B with the LTX projection baked into one file, where 2.3 needs
+Gemma-3 plus a separate projection file, so the Model section drops to one
+text-encoder picker. Its defaults also differ - 24 fps and 960x544 against
+2.3's 25 fps and 1280x720 - while the sigma schedule, sampler and CFG are the
+same. Everything else (Prompt Beats, guides, audio, motion context, the player
+and scene bar) behaves identically on both.
+
+2.5 has no spatial upscaler of its own yet, so **Spatial Upsample** on a 2.5
+run loads the 2.3 upscaler, which is what the official 2.5 two-stage workflow
+does.
+
+### The LTX node is now "LTX Oasis"
+
+With 2.5 in the picker the node is no longer 2.3-only, so its header reads
+**LTX Oasis**. Display name only: the class id stays `LTX23Oasis`, the folder
+stays `ltx23_oasis/`, routes stay `/ltx23_oasis/*`, and presets and themes stay
+under `user/ltx23_oasis/`. Saved workflows keep loading, and a node you renamed
+by hand keeps your title.
+
+### Create Movie audio (Video Oasis Viewer and LTX Oasis)
+
+Joining clips used to drop a short hole into continuous ambience at every cut,
+and audio walked progressively late against picture down a long scene bar.
+Both came from measuring audio the wrong way: every clip's AAC encode pads its
+tail out to a whole block, and clip files run fractionally longer than their
+own video. Audio is now cut to exactly the length each clip's frame count
+calls for, so the two are measured off the same ruler.
+
+The remaining artifact was the incoming clip's first few frames arriving weak,
+which a trim cannot recover because it is real audio, just quiet. The samples
+either side of a join are now rebuilt by crossfading the two clips' own
+interiors played backwards, which cannot click and does not change the sample
+count. Create Movie reports what it did to each clip in the ComfyUI console.
 
 ---
 
@@ -156,7 +202,7 @@ work without it.
 Presets / themes:
 
 - Image Oasis → `ComfyUI/user/image_oasis/`
-- LTX2.3 Oasis → `ComfyUI/user/ltx23_oasis/`
+- LTX Oasis → `ComfyUI/user/ltx23_oasis/`
 - Audio Oasis → `ComfyUI/user/audio_oasis/`
 
 ---
@@ -165,7 +211,7 @@ Presets / themes:
 
 - Execution timer pattern adapted from crt-nodes.
 - Krea 2 conditioning rebalance: nova452 / huwhitememes (Apache-2.0).
-- LTX2.3 Oasis vendors PromptRelay / patches from WhatDreamsCost-ComfyUI
+- LTX Oasis vendors PromptRelay / patches from WhatDreamsCost-ComfyUI
   (LTX Director), GPL-3.0-or-later - see `ltx23_oasis/vendor/`.
 - "Accessibility tool for the nodally challenged" - PheebyKatz.
 

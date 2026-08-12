@@ -1208,7 +1208,7 @@ app.registerExtension({
         <div class="ao-row">
           <button class="ao-btn" data-theme-reset style="margin-top:0;flex:1">Reset to default</button>
         </div>
-        <div class="ao-mini" style="opacity:.7">Audio Oasis keeps its own palette. Edits preview live across every Audio Oasis node and do not affect Image Oasis or LTX2.3 Oasis. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>`;
+        <div class="ao-mini" style="opacity:.7">Audio Oasis keeps its own palette. Edits preview live across every Audio Oasis node and do not affect Image Oasis or LTX Oasis. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>`;
 
       const renderLeft = () => {
         // Help body has its own scroll viewport; it gets destroyed and
@@ -1378,7 +1378,7 @@ app.registerExtension({
               <span class="ao-seg-name">${savedSeg ? esc(savedSeg.filename) + (fileOk ? "" : " (file missing)") : "not saved yet"}</span>
             </div>
             <button class="ao-seg-play" data-seg-play="${i}" title="Play this segment">\u25b6</button>
-            ${qualified ? `<span class="ao-seg-grip" title="Drag onto LTX2.3 Oasis's audio slot">\u22ee\u22ee</span>` : ""}
+            ${qualified ? `<span class="ao-seg-grip" title="Drag onto LTX Oasis's audio slot">\u22ee\u22ee</span>` : ""}
           </div>`;
         }).join("");
 

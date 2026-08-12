@@ -42,7 +42,7 @@ class AudioOasis:
     CATEGORY = "audio"
     DESCRIPTION = ("Upload an mp3/wav, chop it into segments on a waveform, save them in "
                    "numbered order, and output the selected clip as AUDIO -- or drag a "
-                   "segment straight onto LTX2.3 Oasis's audio slot.")
+                   "segment straight onto LTX Oasis's audio slot.")
     SEARCH_ALIASES = ["audio oasis", "chop audio", "audio segments", "waveform",
                        "mp3 chopper", "audio splitter", "song segments"]
 

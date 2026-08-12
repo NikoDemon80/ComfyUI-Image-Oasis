@@ -1207,7 +1207,7 @@ app.registerExtension({
         <div class="io-row">
           <button class="io-btn" data-theme-reset style="margin-top:0;flex:1">Reset to default</button>
         </div>
-        <div class="io-mini" style="opacity:.7">LTX2.3 Oasis keeps its own palette, shared with Video Oasis Viewer. Edits preview live across every LTX2.3 Oasis node and do not affect Image Oasis or Audio Oasis. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>
+        <div class="io-mini" style="opacity:.7">LTX Oasis keeps its own palette, shared with Video Oasis Viewer. Edits preview live across every LTX Oasis node and do not affect Image Oasis or Audio Oasis. Save Theme stores the current palette as a named entry; click any saved row to switch.</div>
       `);
       const helpSection = () => sec("help","Help", `
         <div class="io-help-body">${IO_HELP_HTML || '<div class="io-mini" style="opacity:.7">Loading help\u2026</div>'}</div>

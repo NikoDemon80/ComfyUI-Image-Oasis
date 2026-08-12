@@ -5,7 +5,7 @@ Frontend: [`../web/audio_oasis.js`](../web/audio_oasis.js). Suite overview:
 [root README](../README.md).
 
 Load an mp3/wav/flac/m4a, chop it into segments on a waveform, save the
-segments in numbered order, and feed the result to LTX2.3 Oasis's
+segments in numbered order, and feed the result to LTX Oasis's
 audio-driven-video slot - or any other AUDIO-input node.
 
 ## Layout
@@ -42,7 +42,7 @@ position.
    frame boundary, ~20-30ms off). A `manifest.json` next to the segments
    records the full cut state. Re-saving replaces the previous numbered set
    for that track name.
-6. Drag a saved segment's grip (⋮⋮) straight onto LTX2.3 Oasis's audio
+6. Drag a saved segment's grip (⋮⋮) straight onto LTX Oasis's audio
    slot to use it as that node's audio-driven-video input - no upload
    step, no wire. You can also click a segment row (or "Use full track as
    output") to choose what the node's own `AUDIO` output socket carries if
