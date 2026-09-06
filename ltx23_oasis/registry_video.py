@@ -72,9 +72,6 @@ ARCH_REGISTRY = {
             "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
             "cfg": 1.0,
             "sampler": "euler_ancestral",
-            # LTXVConditioning stamps the frame rate into cond; kept equal to
-            # the working fps unless the user overrides it.
-            "conditioning_fps": 25.0,
         },
 
         "speed_mode": None,          # the arch entry IS the distilled config
@@ -149,7 +146,6 @@ ARCH_REGISTRY = {
             "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
             "cfg": 1.0,
             "sampler": "euler_ancestral",
-            "conditioning_fps": 24.0,
         },
 
         "speed_mode": None,

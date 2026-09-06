@@ -21,8 +21,20 @@ import numpy as np
 
 import folder_paths
 from comfy.cli_args import args
+from oasis_csrf import require_same_origin
 
 log = logging.getLogger("VideoOasis")
+
+
+def _ltx_latent_cache():
+    """LTX Oasis registers as oasis_suite_ltx23_oasis. Optional: Viewer-only
+    encodes have nothing pending."""
+    import sys
+    pkg = sys.modules.get("oasis_suite_ltx23_oasis")
+    if pkg is None:
+        return None
+    return getattr(pkg, "latent_cache", None) or sys.modules.get(
+        "oasis_suite_ltx23_oasis.latent_cache")
 
 # --------------------------------------------------------------------------
 # Encoding tables
@@ -30,10 +42,20 @@ log = logging.getLogger("VideoOasis")
 
 # Container -> codecs that make sense inside it (first = auto choice)
 CONTAINER_CODECS = {
-    "mp4":  ["h264", "hevc"],
+    "mp4":  ["h264", "hevc", "av1"],
     "webm": ["vp9", "av1"],
-    "mkv":  ["h264", "hevc", "vp9", "av1"],
+    "mkv":  ["h264", "hevc", "vp9", "av1", "ffv1", "prores"],
+    "mov":  ["h264", "hevc", "prores"],
 }
+
+# Codec chosen, container auto: the natural home.
+CODEC_HOME = {
+    "vp9": "webm", "av1": "webm",
+    "ffv1": "mkv", "prores": "mov",
+}
+
+# No CRF. FFV1 is bit-exact 8-bit RGB; ProRes 422 HQ is visually lossless.
+LOSSLESS_CODECS = ("ffv1", "prores")
 
 # PyAV encoder names
 ENCODER_MAP = {
@@ -41,6 +63,8 @@ ENCODER_MAP = {
     "hevc": "hevc",        # libx265
     "vp9":  "libvpx-vp9",
     "av1":  "libsvtav1",
+    "ffv1": "ffv1",
+    "prores": "prores_ks",
 }
 
 # quality preset -> CRF, per codec family
@@ -59,16 +83,25 @@ def _resolve_encode_plan(fmt: str, codec: str, quality: str, crf: int):
         return ("mp4", "auto", None, True)
 
     if fmt == "auto":
-        # codec chosen, container not: pick the natural home
-        fmt = "webm" if codec in ("vp9", "av1") else "mp4"
+        fmt = CODEC_HOME.get(codec, "mp4")
     if codec == "auto":
-        codec = CONTAINER_CODECS[fmt][0]
-    if codec not in CONTAINER_CODECS[fmt]:
-        # e.g. h264 + webm -> coerce to the container's first-class codec
-        log.warning("VideoOasis: %s not valid in %s, using %s",
-                    codec, fmt, CONTAINER_CODECS[fmt][0])
-        codec = CONTAINER_CODECS[fmt][0]
+        codec = CONTAINER_CODECS.get(fmt, CONTAINER_CODECS["mp4"])[0]
+    allowed = CONTAINER_CODECS.get(fmt)
+    if not allowed or codec not in allowed:
+        # Keep the codec the user picked; move the container to its home.
+        home = CODEC_HOME.get(codec)
+        if home and codec in CONTAINER_CODECS.get(home, ()):
+            log.warning("VideoOasis: %s not valid in %s, using %s",
+                        codec, fmt, home)
+            fmt = home
+        else:
+            fallback = (allowed or CONTAINER_CODECS["mp4"])[0]
+            log.warning("VideoOasis: %s not valid in %s, using %s",
+                        codec, fmt, fallback)
+            codec = fallback
 
+    if codec in LOSSLESS_CODECS:
+        return (fmt, codec, None, False)
     if quality == "custom":
         chosen_crf = int(crf)
     else:
@@ -87,15 +120,51 @@ def _build_metadata(prompt, extra_pnginfo):
     return metadata or None
 
 
+def _video_pix_fmt(codec):
+    if codec == "ffv1":
+        return "bgr0"          # packed BGR; bit-exact vs decoded 8-bit RGB
+    if codec == "prores":
+        return "yuv422p10le"   # 422 HQ
+    return "yuv420p"
+
+
+def _apply_video_options(vstream, codec, crf):
+    if codec == "ffv1":
+        vstream.options = {}
+        return
+    if codec == "prores":
+        vstream.options = {"profile": "3"}   # 422 HQ
+        return
+    vstream.options = {"crf": str(crf)}
+    if codec in ("vp9", "av1"):
+        vstream.bit_rate = 0            # required for CRF mode on vpx/svt
+    if codec == "av1":
+        vstream.options["preset"] = "6"
+    if codec == "h264":
+        vstream.options["preset"] = "medium"
+
+
+def _audio_plan(container_fmt, codec, src_rate, layout):
+    """(encoder, out_rate, sample_fmt) for the audio sidecar."""
+    if codec == "ffv1":
+        return "flac", src_rate, "s16"
+    if codec == "prores":
+        return "pcm_s16le", src_rate, "s16"
+    if container_fmt == "webm":
+        return "libopus", 48000, "fltp"      # opus requires 48k
+    return "aac", src_rate, "fltp"
+
+
 def _encode_with_pyav(video, path, container_fmt, codec, crf, metadata):
     """Custom encode path: real CRF control + audio muxing, mirroring
     core's VideoFromComponents.save_to but with more codecs."""
     components = video.get_components()
     images = components.images                      # [N, H, W, C] float 0..1
     frame_rate = components.frame_rate
+    pix_fmt = _video_pix_fmt(codec)
 
     options = {}
-    if container_fmt == "mp4":
+    if container_fmt in ("mp4", "mov"):
         options["movflags"] = "use_metadata_tags"
 
     with av.open(path, mode="w", options=options) as output:
@@ -108,30 +177,23 @@ def _encode_with_pyav(video, path, container_fmt, codec, crf, metadata):
         vstream = output.add_stream(ENCODER_MAP[codec], rate=rate)
         vstream.width = images.shape[2]
         vstream.height = images.shape[1]
-        vstream.pix_fmt = "yuv420p"
-        vstream.options = {"crf": str(crf)}
-        if codec in ("vp9", "av1"):
-            vstream.bit_rate = 0            # required for CRF mode on vpx/svt
-        if codec == "av1":
-            vstream.options["preset"] = "6"
-        if codec == "h264":
-            vstream.options["preset"] = "medium"
+        vstream.pix_fmt = pix_fmt
+        _apply_video_options(vstream, codec, crf)
 
         # Audio stream must be declared before packets are written.
         astream = None
         waveform = None
         layout = "stereo"
         src_rate = out_rate = 0
+        audio_fmt = "fltp"
         if components.audio:
             src_rate = int(components.audio["sample_rate"])
             waveform = components.audio["waveform"][0]      # [C, T]
             needed = math.ceil(src_rate / float(frame_rate) * images.shape[0])
             waveform = waveform[:, :needed]
             layout = {1: "mono", 2: "stereo", 6: "5.1"}.get(waveform.shape[0], "stereo")
-            if container_fmt == "webm":
-                acodec, out_rate = "libopus", 48000          # opus requires 48k
-            else:
-                acodec, out_rate = "aac", src_rate
+            acodec, out_rate, audio_fmt = _audio_plan(
+                container_fmt, codec, src_rate, layout)
             astream = output.add_stream(acodec, rate=out_rate, layout=layout)
 
         # ---- video ----
@@ -152,7 +214,7 @@ def _encode_with_pyav(video, path, container_fmt, codec, crf, metadata):
             img = np.nan_to_num(img, nan=0.0, posinf=1.0, neginf=0.0)
             img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
             vframe = av.VideoFrame.from_ndarray(img, format="rgb24")
-            vframe = vframe.reformat(format="yuv420p")
+            vframe = vframe.reformat(format=pix_fmt)
             for packet in vstream.encode(vframe):
                 output.mux(packet)
         for packet in vstream.encode(None):
@@ -165,8 +227,9 @@ def _encode_with_pyav(video, path, container_fmt, codec, crf, metadata):
                 format="fltp", layout=layout)
             aframe.sample_rate = src_rate
             aframe.pts = 0
-            if out_rate != src_rate:
-                resampler = av.AudioResampler(format="fltp", layout=layout, rate=out_rate)
+            need_resample = (out_rate != src_rate) or (audio_fmt != "fltp")
+            if need_resample:
+                resampler = av.AudioResampler(format=audio_fmt, layout=layout, rate=out_rate)
                 frames = resampler.resample(aframe)
                 frames += resampler.resample(None)           # flush resampler
             else:
@@ -338,6 +401,12 @@ class VideoOasisPreview:
                     "video-oasis/result", {"io_id": io_id, "results": [info]})
             except Exception:
                 log.exception("VideoOasis: WS result delivery failed")
+            try:
+                lcache = _ltx_latent_cache()
+                if lcache is not None:
+                    lcache.commit_pending(io_id, file, subfolder, "temp")
+            except Exception:
+                log.debug("VideoOasis: LTX latent commit skipped", exc_info=True)
         else:
             log.warning("VideoOasis: no io_id in widget state; preview not delivered")
         return {"ui": {}, "result": (video,)}
@@ -352,6 +421,7 @@ try:
     from aiohttp import web
 
     @PromptServer.instance.routes.post("/video_oasis/save")
+    @require_same_origin
     async def video_oasis_save(request):
         try:
             data = await request.json()
@@ -397,6 +467,14 @@ try:
                 out_file = f"{out_name}_{counter:05}_.{ext}"
                 dest = os.path.join(full_folder, out_file)
                 shutil.copy2(src, dest)   # lossless, instant, keeps embedded workflow metadata
+                try:
+                    lcache = _ltx_latent_cache()
+                    if lcache is not None:
+                        lcache.copy_to(
+                            lcache.entry_id_for(src_filename, src_subfolder, src_type),
+                            lcache.entry_id_for(out_file, out_subfolder, "output"))
+                except Exception:
+                    log.debug("VideoOasis: LTX latent copy skipped", exc_info=True)
                 saved.append({
                     "source": src_filename,
                     "filename": out_file,

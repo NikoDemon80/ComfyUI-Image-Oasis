@@ -11,6 +11,7 @@ import logging
 import folder_paths
 from aiohttp import web
 from server import PromptServer
+from oasis_csrf import require_same_origin
 
 log = logging.getLogger("VideoOasis")
 routes = PromptServer.instance.routes
@@ -72,6 +73,7 @@ async def vo_list_output_videos(request):
 
 
 @routes.post("/video_oasis/probe_video")
+@require_same_origin
 async def vo_probe_video(request):
     try:
         data = await request.json()
@@ -147,28 +149,119 @@ async def vo_probe_video(request):
 # Audio: always re-encoded to AAC when requested, with silence synthesized
 # for clips that have no audio stream.
 #
-# The output is written to output/video/create_movie_NNNNN.mp4, with NNNNN
-# chosen to be the next unused sequence number in that folder.
+# The output is written to output/video/create_movie_NNNNN.{mp4|webm|mkv|mov}.
+# The movie keeps the clips' codec and its natural container.
 
 _MOVIE_PREFIX = "create_movie_"
 
+_COPY_CONTAINER = {
+    "h264": "mp4", "avc1": "mp4",
+    "hevc": "mp4", "h265": "mp4", "hev1": "mp4", "hvc1": "mp4",
+    "vp8": "webm", "vp9": "webm",
+    "av1": "webm",   # auto home; mp4 is also legal and kept when the clip is mp4
+    "ffv1": "mkv",
+    "prores": "mov",
+}
 
-def _next_movie_path():
-    """Pick output/video/create_movie_NNNNN.mp4 -- the smallest unused N ≥ 1."""
+_CONTAINER_CODECS = {
+    "mp4":  ("h264", "avc1", "hevc", "h265", "hev1", "hvc1", "av1"),
+    "webm": ("vp8", "vp9", "av1"),
+    "mkv":  ("h264", "hevc", "vp8", "vp9", "av1", "ffv1", "prores"),
+    "mov":  ("h264", "hevc", "prores"),
+}
+
+
+def _codec_key(name):
+    n = (name or "").lower()
+    for prefix in ("libvpx-", "libsvt", "lib"):
+        if n.startswith(prefix):
+            n = n[len(prefix):]
+            break
+    return n
+
+
+def _canonical_codec(name):
+    k = _codec_key(name)
+    return {"avc1": "h264", "h265": "hevc", "hev1": "hevc", "hvc1": "hevc",
+            "av01": "av1"}.get(k, k)
+
+
+def _copy_container(codec):
+    return _COPY_CONTAINER.get(_canonical_codec(codec))
+
+
+def _movie_container(codec, src_path=None):
+    """Container for a Create Movie of this clip codec.
+
+    AV1 is legal in both mp4 and webm. Prefer the first clip's own
+    extension when that pairing is valid, so an AV1 mp4 bar does not get
+    remuxed into webm.
+    """
+    c = _canonical_codec(codec)
+    ext = os.path.splitext(src_path or "")[1].lstrip(".").lower()
+    allowed = _CONTAINER_CODECS.get(ext)
+    if allowed and c in allowed:
+        return ext
+    return _copy_container(codec) or "mkv"
+
+
+def _reencode_profile(codec):
+    c = _canonical_codec(codec)
+    if c == "hevc":
+        return "hevc", "yuv420p", {"crf": "18", "preset": "veryfast"}, None
+    if c == "vp9":
+        return "libvpx-vp9", "yuv420p", {"crf": "32"}, 0
+    if c == "vp8":
+        return "libvpx", "yuv420p", {"crf": "32"}, 0
+    if c == "av1":
+        return "libsvtav1", "yuv420p", {"crf": "32", "preset": "8"}, 0
+    if c == "ffv1":
+        return "ffv1", "bgr0", {}, None
+    if c == "prores":
+        return "prores_ks", "yuv422p10le", {"profile": "3"}, None
+    return "libx264", "yuv420p", {"crf": "18", "preset": "veryfast"}, None
+
+
+def _concat_audio_codec(video_codec, container_ext, src_rate, layout):
+    c = _canonical_codec(video_codec)
+    ext = (container_ext or "").lstrip(".").lower()
+    if c == "ffv1":
+        return "flac", src_rate, layout
+    if c == "prores":
+        return "pcm_s16le", src_rate, layout
+    if ext == "webm" or c in ("vp9", "vp8"):
+        return "libopus", 48000, layout
+    return "aac", src_rate, layout
+
+
+def _add_concat_audio_stream(out, output_path, params, video_codec=None):
+    layout = params.get("layout") or "stereo"
+    src_rate = int(params.get("rate") or 48000)
+    ext = os.path.splitext(output_path)[1]
+    acodec, rate, layout = _concat_audio_codec(
+        video_codec, ext, src_rate, layout)
+    stream = out.add_stream(acodec, rate=rate, layout=layout)
+    return stream, rate
+
+
+def _next_movie_path(ext="mp4"):
+    """Pick output/video/create_movie_NNNNN.<ext> - the smallest unused N >= 1."""
+    ext = (ext or "mp4").lstrip(".").lower()
     out_root = folder_paths.get_output_directory()
     video_dir = os.path.join(out_root, "video")
     os.makedirs(video_dir, exist_ok=True)
     used = set()
+    plen = len(_MOVIE_PREFIX)
     for name in os.listdir(video_dir):
-        if not name.startswith(_MOVIE_PREFIX) or not name.lower().endswith(".mp4"):
+        if not name.startswith(_MOVIE_PREFIX):
             continue
-        stem = name[len(_MOVIE_PREFIX):-4]
+        stem, _, _e = name[plen:].rpartition(".")
         if stem.isdigit():
             used.add(int(stem))
     n = 1
     while n in used:
         n += 1
-    filename = f"{_MOVIE_PREFIX}{n:05d}.mp4"
+    filename = f"{_MOVIE_PREFIX}{n:05d}.{ext}"
     return os.path.join(video_dir, filename), f"video/{filename}"
 
 
@@ -319,6 +412,7 @@ def _encode_audio_array(out_container, audio_stream, arr, pts):
     layout_name = codec_ctx.layout.name
     sample_rate = codec_ctx.sample_rate
     frame_size = codec_ctx.frame_size or 1024
+    sample_fmt = getattr(getattr(codec_ctx, "format", None), "name", None) or "fltp"
     total = int(arr.shape[1])
     i = 0
     while i < total:
@@ -330,8 +424,20 @@ def _encode_audio_array(out_container, audio_stream, arr, pts):
         n = int(block.shape[1])
         pts += n
         i += n
-        for packet in audio_stream.encode(frame):
-            out_container.mux(packet)
+        frames = [frame]
+        if sample_fmt != "fltp":
+            resampler = av.AudioResampler(
+                format=sample_fmt, layout=layout_name, rate=sample_rate)
+            frames = list(resampler.resample(frame) or [])
+            try:
+                frames += list(resampler.resample(None) or [])
+            except Exception:
+                pass
+        for f in frames:
+            if f.pts is None:
+                f.pts = frame.pts
+            for packet in audio_stream.encode(f):
+                out_container.mux(packet)
     return pts
 
 
@@ -447,14 +553,14 @@ def _probe_movie_inputs(input_paths):
 
 
 def _stream_copy_viable(probes):
-    """True only when every clip shares codec + SPS/PPS (extradata).
-
-    Clipped re-encodes often share h264/size/fps with the originals but
-    different extradata -- stream-copy then corrupts after the first cut.
+    """True when every clip shares codec + SPS/PPS and that codec has a
+    container we can mux without transcoding.
     """
     if not probes:
         return False
     ref = probes[0]
+    if not _copy_container(ref["codec"]):
+        return False
     for p in probes[1:]:
         if p["codec"] != ref["codec"] or p["extradata"] != ref["extradata"]:
             return False
@@ -487,9 +593,10 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
             a_out = None
             seam = None
             if out_audio_params:
-                a_out = out.add_stream("aac", rate=out_audio_params["rate"])
-                a_out.layout = out_audio_params["layout"]
-                seam = _AudioSeamWriter(out, a_out, out_audio_params["rate"])
+                a_out, audio_rate = _add_concat_audio_stream(
+                    out, output_path, out_audio_params, ref.get("codec"))
+                out_audio_params = dict(out_audio_params, rate=audio_rate)
+                seam = _AudioSeamWriter(out, a_out, audio_rate)
 
             v_pts_offset = 0
 
@@ -559,27 +666,35 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
                 }
                 break
 
+    encoder, pix_fmt, vopts, bit_rate = _reencode_profile(ref["codec"])
     with av.open(output_path, mode="w") as out:
-        v_out = out.add_stream("libx264", rate=fps)
+        v_out = out.add_stream(encoder, rate=fps)
         v_out.width = width
         v_out.height = height
-        v_out.pix_fmt = "yuv420p"
+        v_out.pix_fmt = pix_fmt
         v_out.time_base = v_tb
         try:
             v_out.codec_context.time_base = v_tb
         except Exception:
             pass
-        try:
-            v_out.options = {"crf": "18", "preset": "veryfast"}
-        except Exception:
-            pass
+        if vopts:
+            try:
+                v_out.options = dict(vopts)
+            except Exception:
+                pass
+        if bit_rate is not None:
+            try:
+                v_out.bit_rate = bit_rate
+            except Exception:
+                pass
 
         a_out = None
         seam = None
         if out_audio_params:
-            a_out = out.add_stream("aac", rate=out_audio_params["rate"])
-            a_out.layout = out_audio_params["layout"]
-            seam = _AudioSeamWriter(out, a_out, out_audio_params["rate"])
+            a_out, audio_rate = _add_concat_audio_stream(
+                out, output_path, out_audio_params, ref.get("codec"))
+            out_audio_params = dict(out_audio_params, rate=audio_rate)
+            seam = _AudioSeamWriter(out, a_out, audio_rate)
 
         v_pts = 0
         for probe in probes:
@@ -588,7 +703,7 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
                 v_in = next(s for s in in_c.streams if s.type == "video")
                 for frame in in_c.decode(v_in):
                     out_frame = frame.reformat(
-                        width=width, height=height, format="yuv420p")
+                        width=width, height=height, format=pix_fmt)
                     out_frame.pts = v_pts
                     out_frame.time_base = v_tb
                     v_pts += 1
@@ -622,23 +737,54 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
     }
 
 
-def _concat_movie(input_paths, output_path, use_audio):
-    """Create Movie entry: stream-copy when safe, otherwise re-encode."""
-    probes, _ref = _probe_movie_inputs(input_paths)
+def _concat_movie(input_paths, use_audio):
+    """Create Movie: keep the clips' codec and container."""
+    probes, ref = _probe_movie_inputs(input_paths)
     copy_ok = _stream_copy_viable(probes)
+    keys = {_canonical_codec(p["codec"]) for p in probes}
+    if len(keys) > 1:
+        _mv_log("clips disagree on codec (%s); movie follows the first clip (%s)"
+                % (", ".join(sorted(keys)), _canonical_codec(ref["codec"])))
+    ext = _movie_container(ref["codec"], ref.get("path"))
+    output_path, rel_path = _next_movie_path(ext)
     _mv_log(f"seam-repair build: {len(probes)} clips, "
+            f"codec={_canonical_codec(ref['codec'])} container={ext}, "
             f"audio={'on' if use_audio else 'OFF'}, "
             f"path={'stream_copy' if copy_ok else 'reencode'} "
             f"-> {os.path.basename(output_path)}")
-    if copy_ok:
-        info = _stream_copy_concat(input_paths, output_path, use_audio, probes)
-    else:
-        info = _reencode_concat(input_paths, output_path, use_audio, probes)
+    try:
+        if copy_ok:
+            try:
+                info = _stream_copy_concat(
+                    input_paths, output_path, use_audio, probes)
+            except Exception as e:
+                _mv_log("stream_copy failed (%r); re-encoding in the same codec"
+                        % (e,))
+                try:
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                except OSError:
+                    pass
+                output_path, rel_path = _next_movie_path(ext)
+                info = _reencode_concat(
+                    input_paths, output_path, use_audio, probes)
+        else:
+            info = _reencode_concat(
+                input_paths, output_path, use_audio, probes)
+    except Exception:
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except OSError:
+            pass
+        raise
     _mv_log("done")
+    info["path"] = rel_path
     return info
 
 
 @routes.post("/video_oasis/create_movie")
+@require_same_origin
 async def vo_create_movie(request):
     try:
         data = await request.json()
@@ -675,29 +821,18 @@ async def vo_create_movie(request):
         return web.json_response(
             {"error": "PyAV not installed."}, status=500)
 
-    output_path, rel_path = _next_movie_path()
     try:
-        info = _concat_movie(paths, output_path, use_audio)
+        info = _concat_movie(paths, use_audio)
     except ValueError as e:
-        # Clean up any partial output before returning the error.
-        try:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-        except OSError:
-            pass
         return web.json_response({"error": str(e)}, status=400)
     except Exception as e:
-        try:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-        except OSError:
-            pass
         return web.json_response(
             {"error": f"Concat failed: {e}"}, status=500)
 
     # filename/subfolder are split out (not just the joined rel_path) so the
     # frontend can hand the finished movie straight to loadExternalVideo and
     # have it land in the scene bar, exactly the way Clip already does.
+    rel_path = info["path"]
     subfolder, _, filename = rel_path.rpartition("/")
     return web.json_response({
         "ok": True,
@@ -892,6 +1027,7 @@ def _trim_video(input_path, output_path, start_s, end_s):
 
 
 @routes.post("/video_oasis/clip_video")
+@require_same_origin
 async def vo_clip_video(request):
     try:
         data = await request.json()

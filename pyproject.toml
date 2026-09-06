@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-image-oasis"
 description = "Oasis Suite for ComfyUI: Image Oasis (all-in-one image gen), Video Oasis Viewer (preview/encode/scene bar/clip/movie), LTX Oasis (all-in-one LTX 2.3 / 2.5 video), and Audio Oasis (waveform chop / segments). Stable node ids ImageOasis, VideoOasisPreview, LTX23Oasis, AudioOasis."
-version = "1.7.0"
+version = "1.8.0"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"

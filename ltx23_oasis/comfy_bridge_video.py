@@ -15,6 +15,11 @@ what they mean.
 import inspect
 
 
+def node_registered(class_name):
+    import nodes as _n
+    return class_name in _n.NODE_CLASS_MAPPINGS
+
+
 def node_class(class_name):
     import nodes as _n
     Cls = _n.NODE_CLASS_MAPPINGS.get(class_name)

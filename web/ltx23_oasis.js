@@ -219,6 +219,7 @@ const CSS = `
 .iov-widget .vo-infobar{padding:3px 10px;font-family:var(--io-mono,'Space Mono',monospace);font-size:8px;color:var(--io-dim,#888);letter-spacing:.06em;background:rgba(0,0,0,.25);border-top:1px solid var(--io-bd,#3a3a3a);white-space:nowrap;overflow:hidden;flex-shrink:0;height:20px;line-height:14px;box-sizing:border-box;display:flex;align-items:center;gap:6px;}
 .iov-widget .vo-info-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .iov-widget .vo-info-text.vo-warn{color:#e0a050;}
+.iov-widget .vo-nolatent{color:#e0a050;}
 .iov-widget .vo-info-label{font-weight:700;color:var(--io-accent,#6f8bbd);}
 .iov-widget .vo-nav{display:inline-flex;align-items:center;gap:4px;flex-shrink:0;color:var(--io-dim,#888);font-family:var(--io-mono,'Space Mono',monospace);font-size:9px;letter-spacing:.04em;}
 .iov-widget .vo-nav-arrow{background:none;border:none;color:var(--io-dim,#888);cursor:pointer;font-size:14px;line-height:1;padding:0 4px;font-family:var(--io-mono,'Space Mono',monospace);}
@@ -493,10 +494,37 @@ const MODE_LABELS = {t2v:"Text \u2192 Video", i2v:"Image \u2192 Video"};
 const RATIOS = ["1:1","2:3","3:4","9:16","16:9","4:3","3:2"];
 const RATIO_MIRROR = {"1:1":"1:1","2:3":"3:2","3:2":"2:3","3:4":"4:3","4:3":"3:4","9:16":"16:9","16:9":"9:16"};
 const SEED_CONTROLS = ["fixed","increment","decrement","randomize"];
-const FORMATS = ["auto","mp4","webm","mkv"];
-const CODECS = ["auto","h264","hevc","vp9","av1"];
+const FORMATS = ["auto","mp4","webm","mkv","mov"];
+const CODECS = ["auto","h264","hevc","vp9","av1","ffv1","prores"];
 const QUALITIES = ["balanced","high","small","custom"];
+const CODEC_HOME = {vp9:"webm", av1:"webm", ffv1:"mkv", prores:"mov"};
+const CONTAINER_CODECS = {
+  mp4:["h264","hevc","av1"], webm:["vp9","av1"],
+  mkv:["h264","hevc","vp9","av1","ffv1","prores"],
+  mov:["h264","hevc","prores"],
+};
+const LOSSLESS_CODECS = ["ffv1","prores"];
+const BROWSER_ODD_CODECS = ["hevc","ffv1","prores"];
+const snapEncodeCodec = (st, codec) => {
+  st.codec = codec;
+  const home = CODEC_HOME[codec];
+  if (!home) return;
+  const ok = st.format === "auto" || (CONTAINER_CODECS[st.format]||[]).includes(codec);
+  if (!ok || st.format === "auto") st.format = home;
+};
+const encodeHint = (codec) => {
+  if (codec === "ffv1")
+    return "FFV1 + FLAC in mkv: true lossless of the decoded frames. Will not play in-browser; the file on disk is fine. Save still copies, no re-encode.";
+  if (codec === "prores")
+    return "ProRes 422 HQ + PCM in mov: NLE-friendly, visually lossless, much bigger. Will not play in-browser; the file on disk is fine. Save still copies, no re-encode.";
+  return "webm takes VP9/AV1; mp4 takes h264/hevc/AV1; mkv takes anything including FFV1; mov takes ProRes. Save copies the preview losslessly \u2014 no re-encode.";
+};
 const SPEEDS = [0.25,0.5,1,1.5,2];
+const VSR_QUALITIES = ["LOW","MEDIUM","HIGH","ULTRA"];
+const VSR_RESIZE = [
+  {id:"scale by multiplier", label:"\u00d7 Scale"},
+  {id:"target dimensions", label:"Target"},
+];
 const HISTORY_CAP = 48;
 const MAX_SEED = 1125899906842624;
 
@@ -509,7 +537,7 @@ let VOG_ARCHS = [
    sampling:{kind:"distilled_manual_sigmas",cfg:1,sampler:"euler_ancestral",
              sigmas:"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"},
    prompt_relay:true,
-   guides:{from_beats:true}, audio:true,
+   guides:{from_beats:true}, audio:true, sage:true,
    upscale_native:{label:"Spatial Upsample (x2)", kind:"latent_upsample",
                    latent_upsampler:"", sigmas:"0.85, 0.7250, 0.4219, 0.0",
                    cfg:1, sampler:"euler"}},
@@ -563,7 +591,7 @@ app.registerExtension({
       const archOf = (key) => VOG_ARCHS.find(a=>a.key===key) || VOG_ARCHS[0];
       const archSeed = (a) => ({
         mode: a.modes[0],
-        frames: a.defaults.frames, fps: a.fps_default, conditioning_fps: 0,
+        frames: a.defaults.frames, fps: a.fps_default,
         cfg: a.sampling.cfg ?? 1,
         sigmas: a.sampling.sigmas || "",
         sampler_name: a.sampling.sampler || "euler",
@@ -588,6 +616,9 @@ app.registerExtension({
         continue_last:false, context_frames:0,
         width:1280, height:720, aspect_lock:"",
         seed:0, seed_control:"randomize",
+        sage:true,
+        enable_vsr:false, vsr_resize_type:"scale by multiplier",
+        vsr_scale:2.0, vsr_width:1920, vsr_height:1080, vsr_quality:"ULTRA",
         format:"auto", codec:"auto", quality:"balanced", crf:20,
         save_prefix:"video/LTX23Oasis",
         ...archSeed(VOG_ARCHS[0]),
@@ -602,7 +633,7 @@ app.registerExtension({
       let themeName = "";
       let ioId = "";
       let allModels = {diffusion:[],gguf_unet:[],clip_std:[],clip_gguf:[],
-                       vaes:[],latent_upsamplers:[],loras:[]};
+                       vaes:[],latent_upsamplers:[],loras:[],rtx_vsr:false};
       let llmModels = [], llmModel = "", wandBusy = false;
       let llmSettingsOpen = false, llmAutoLayers = true, llmGpuLayers = -1;
       let llmContext = 8192, llmMaxTokens = 2048;
@@ -813,8 +844,8 @@ app.registerExtension({
           <div class="io-mini" style="margin-bottom:2px">Start Frame</div>
           ${refSlot("start_image","Start", !startLive)}
           ${!startLive?`<div class="io-mini" style="opacity:.6">Ignored: Text \u2192 Video generates from the prompt alone. Switch to Image \u2192 Video in Prompt Enhancer to use a start image.</div>`:""}
-          <div class="io-row" style="margin-top:2px">${chk("continue_last","\u21bb Continue from viewed video (last frame of what's in the viewer becomes the start)")}</div>
-          ${st.continue_last?`<div class="io-mini" style="opacity:.7">Whatever's playing in the right pane is the tail source: click a different thumbnail in the scene bar and the next run will start from ITS last frame. Works in every mode; overrides the Start slot. First run of a session with nothing loaded generates as plain T2V.</div>`:""}
+          <div class="io-row" style="margin-top:2px">${chk("continue_last","\u21bb Continue from viewed video (the clip in the viewer seeds the next run)")}</div>
+          ${st.continue_last?`<div class="io-mini" style="opacity:.7">Whatever's playing in the right pane is the tail source. Generated clips pin from a cached latent (no h264 round-trip). Clips loaded from disk, Clip, or Create Movie fall back to decoding the file. Overrides the Start slot. First run of a session with nothing loaded generates as plain T2V.</div>`:""}
           ${st.continue_last?`<div class="io-row" style="margin-top:4px">
             <span class="io-label" title="How much of the previous clip to pin in front of the timeline as motion reference. A single frame gives the model a pose but no direction or speed, which is why chained clips can start moving the wrong way. These frames sit outside your clip and are cropped off after decode, so you get back exactly the frames and audio length you asked for. On Generate audio, the previous clip's tail sound is pinned under the context too, so the soundtrack carries across the join. On File audio, your track is never trimmed or shifted: the context window gets silence and your file starts on frame 1.">Motion context</span>
             <select class="io-select" data-f="context_frames">${CONTEXT_WINDOWS.map(n=>`<option value="${n}"${Number(st.context_frames)===n?" selected":""}>${n===0?"Last frame only":`${n} frames \u00b7 ${(n/(Number(st.fps)||25)).toFixed(2)}s`}</option>`).join("")}</select>
@@ -1072,7 +1103,7 @@ app.registerExtension({
             <span class="io-label">Ratio</span>
             <div class="io-toggle-grp">${RATIOS.map(r=>`<button class="io-tog${st.aspect_lock===r?" active":""}" data-ratio="${r}" title="Lock aspect ratio ${r} (click again to unlock)">${r}</button>`).join("")}</div>
           </div>
-          <div class="io-half">${num("frames","Frames",q,q+1,100000,`Snapped to the ${A.label} grid: ${q}n+1 frames.`)}${num("fps","FPS",1,1,240)}${num("conditioning_fps","Cond. FPS",1,0,240,"Frame rate stamped into the LTX conditioning: how fast the model thinks time passes, separate from playback FPS. 0 = follow FPS (recommended). Example: conditioning 25 + encode 12.5 = slow motion.")}</div>
+          <div class="io-half">${num("frames","Frames",q,q+1,100000,`Snapped to the ${A.label} grid: ${q}n+1 frames.`)}${num("fps","FPS",1,1,240)}</div>
           <div class="io-mini" style="opacity:.7"><span data-dur>\u2248 ${dur}s</span> at current settings \u00b7 grid ${q}n+1</div>
           ${A.audio?`
           <div class="io-row">
@@ -1106,18 +1137,42 @@ app.registerExtension({
           <button class="io-icon-btn io-dice io-sm" data-sigmas-reset title="Reset sigmas to arch default">\u21ba</button>
         </div>
         <div class="io-half">${selCol("sampler_name","Sampler",samplers)}${num("cfg","CFG",0.1,0,100,"LTX distilled samples at CFG 1. Raising it roughly doubles time per step and switches the negative prompt to standard guidance; at CFG 1 the negative is applied via NAG.")}</div>
+        ${arch().sage?`<div class="io-row" title="SageAttention (KJNodes) speeds up attention with no quality cost on most runs. Turn it off if output looks wrong - noise, garbled audio - or to compare against an unpatched render.">
+          <span class="io-label">Attention</span>
+          <div class="io-toggle-grp">
+            <button class="io-tog${st.sage!==false?" active":""}" data-sage="on" title="SageAttention on (faster)">Sage</button>
+            <button class="io-tog${st.sage===false?" active":""}" data-sage="off" title="Stock attention (slower, unpatched)">Off</button>
+          </div>
+        </div>`:""}
       `);
       };
 
-      // ── Upscale section (native second stage) ──
+      // ── Upscale section (RTX VSR pixel pass, then native latent second stage) ──
       const upscaleSection = () => {
         const A = arch();
-        if(!A.upscale_native) return "";
         const up = A.upscale_native;
         const refActive = !!(st.start_image || st.continue_last ||
                              (st.relay_segments||[]).some(s => (s.guide_image||"").trim()));
         const noFiles = st.enable_upscale && !(allModels.latent_upsamplers||[]).length;
+        const vsrMissing = st.enable_vsr && !allModels.rtx_vsr;
+        const anyOn = st.enable_vsr || st.enable_upscale;
         return sec("upscale","Upscale", `
+        <div class="io-row">${chk("enable_vsr","RTX Video Super Resolution")}</div>
+        ${st.enable_vsr?`
+        ${vsrMissing?`<div class="io-warn-tip">\u26a0 RTXVideoSuperResolution is not registered. Install Nvidia RTX Nodes from ComfyUI Manager (search RTX) and restart. Needs an Nvidia RTX GPU.</div>`:""}
+        <div class="io-row">
+          <span class="io-label">Size</span>
+          <div class="io-toggle-grp">${VSR_RESIZE.map(r=>`<button class="io-tog${st.vsr_resize_type===r.id?" active":""}" data-vsr-resize="${r.id}">${r.label}</button>`).join("")}</div>
+        </div>
+        ${st.vsr_resize_type==="target dimensions"
+          ?`<div class="io-half">${num("vsr_width","Width",8,64,8192)}${num("vsr_height","Height",8,64,8192)}</div>`
+          :num("vsr_scale","\u00d7 Scale",0.01,1,4,"Scale factor. 2.0 doubles each side. The node snaps the result to a multiple of 8.")}
+        <div class="io-row">
+          <span class="io-label">Quality</span>
+          <div class="io-toggle-grp">${VSR_QUALITIES.map(q=>`<button class="io-tog${st.vsr_quality===q?" active":""}" data-vsr-quality="${q}">${q}</button>`).join("")}</div>
+        </div>
+        <div class="io-mini" style="opacity:.7">Pixel-space, after decode. Spatial Upsample (if on) runs first in latent, then this. Toggling does not resample.</div>`:""}
+        ${up?`
         <div class="io-row">${chk("enable_upscale",esc(up.label))}</div>
         ${st.enable_upscale?`
         <div class="io-row"><span class="io-label">Upsampler</span><select class="io-select" data-f="upscale_upsampler">${optBlank(allModels.latent_upsamplers||[],st.upscale_upsampler,"\u2014 select \u2014")}</select></div>
@@ -1133,6 +1188,8 @@ app.registerExtension({
         <div class="io-half">${selCol("upscale_sampler","Sampler",samplers)}${num("upscale_cfg","CFG",0.1,0,100)}</div>`:""}
         <div class="io-mini" style="opacity:.7">Re-runs only the upsample + decode: the sampled video is cached, so toggling this does not regenerate.</div>
         ${refActive?`<div class="io-warn-tip">\u26a0 A reference image is active; upscaling can drift the subject's likeness. Rendering at half your source image's resolution usually looks better.</div>`:""}`:""}
+        `:""}
+        ${!anyOn?`<div class="io-mini" style="opacity:.7">Off. RTX VSR is a pixel pass after decode; Spatial Upsample is LTX's 2\u00d7 latent second stage.</div>`:""}
       `);
       };
 
@@ -1146,13 +1203,15 @@ app.registerExtension({
           <span class="io-label">Codec</span>
           <div class="io-toggle-grp">${CODECS.map(c=>`<button class="io-tog${st.codec===c?" active":""}" data-enc-codec="${c}">${c}</button>`).join("")}</div>
         </div>
+        ${LOSSLESS_CODECS.includes(st.codec)?"":`
         <div class="io-row">
           <span class="io-label">Quality</span>
           <div class="io-toggle-grp">${QUALITIES.map(qq=>`<button class="io-tog${st.quality===qq?" active":""}" data-enc-quality="${qq}">${qq}</button>`).join("")}</div>
         </div>
         ${st.quality==="custom"?`<div class="io-row"><span class="io-label">CRF</span><input class="io-input" type="number" data-f="crf" value="${esc(st.crf)}" step="1" min="0" max="63"/></div>`:""}
+        `}
         <div class="io-row"><span class="io-label">Save prefix</span><input class="io-input" data-f="save_prefix" value="${esc(st.save_prefix)}"/></div>
-        <div class="io-mini" style="opacity:.7">webm takes VP9/AV1; mp4 takes h264/hevc; mkv takes anything. Save copies the preview losslessly \u2014 no re-encode.</div>
+        <div class="io-mini" style="opacity:.7">${esc(encodeHint(st.codec))}</div>
       `);
 
       // ── Theme + Help (IO verbatim) ──
@@ -1245,6 +1304,7 @@ app.registerExtension({
                     return `<span title="${esc(full)}">${summary} \u2014 ${esc(names)}</span>`;
                   })()):""}
                   ${c.audio?kv("Audio","on"):""}
+                  ${c.enable_vsr?kv("RTX VSR","on"):""}
                   ${c.enable_upscale?kv("Upscale","on"):""}
                   <button class="io-btn" data-preset-load="${p.id}">Load preset</button>
                 </div>`:""}
@@ -1676,13 +1736,15 @@ app.registerExtension({
         }
         infobar.style.display = "";
         const dims = `${e.width || "?"}\u00d7${e.height || "?"}`;
+        const fileFallback = !!st.continue_last && e.hasLatent === false;
         infoText.innerHTML =
           (e.warning ? "\u26a0 " : "") +
           `<span class="vo-info-label">${dims}</span>` +
           ` \u00b7 ${e.fps || "?"} fps \u00b7 ` +
           `${e.frames ?? "?"} frames \u00b7 ${fmtSize(e.size_bytes)}` +
           (e.has_audio ? " \u00b7 audio" : "") +
-          (e.codec === "hevc" ? "  (hevc may not play in-browser; the file itself is fine)" : "");
+          (fileFallback ? ` \u00b7 <span class="vo-nolatent">\u26d3 no latent: decoding the file</span>` : "") +
+          (BROWSER_ODD_CODECS.includes(e.codec) ? "  (" + e.codec + " may not play in-browser; the file itself is fine)" : "");
         infoText.classList.toggle("vo-warn", !!e.warning);
         infoText.title = e.warning || "";
         if (history.length > 1) {
@@ -1838,9 +1900,27 @@ app.registerExtension({
       });
 
       // ── Continue-from-viewed: register the current entry as tail source
-      // The backend decodes the tail off disk at generate time, so all the
-      // browser has to send is which clip it is. No <video> seek, no canvas
-      // round-trip, and the motion-context window can be any length.
+      // Generated clips also cache a latent; set_tail reports whether this
+      // entry has one. File decode is the fallback when it doesn't.
+      const dropLatent = (entry) => {
+        if (!entry?.filename) return;
+        api.fetchApi("/ltx23_oasis/drop_latent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ video: entry.filename,
+                                 subfolder: entry.subfolder || "",
+                                 type: entry.type || "temp" }),
+        }).catch(() => {});
+      };
+      const sweepLatents = () => {
+        api.fetchApi("/ltx23_oasis/sweep_latents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries: history.map(e => ({
+            video: e.filename, subfolder: e.subfolder || "",
+            type: e.type || "temp" })) }),
+        }).catch(() => {});
+      };
       const _uploadTail = async (entry) => {
         const r = await api.fetchApi("/ltx23_oasis/set_tail", {
           method: "POST",
@@ -1863,8 +1943,12 @@ app.registerExtension({
       let _tailInFlight = null;
       const _tailFire = async (entry) => {
         try {
-          await _uploadTail(entry);
-          if (entry === history[activeIdx]) tailSourceEntry = entry;
+          const r = await _uploadTail(entry);
+          entry.hasLatent = !!(r && r.has_latent);
+          if (entry === history[activeIdx]) {
+            tailSourceEntry = entry;
+            renderInfo();
+          }
         } catch (e) {
           console.debug("[LTX Oasis] tail sync failed:", e && e.message || e);
         }
@@ -1938,6 +2022,7 @@ app.registerExtension({
         const wasActive = (idx === activeIdx);
         entry.thumbEl?.remove();
         history.splice(idx, 1);
+        dropLatent(entry);
         // If we deleted the entry the server's tail belongs to, clear the
         // marker so the next loadEntry re-syncs from whatever's now active.
         if (entry === tailSourceEntry) tailSourceEntry = null;
@@ -2108,6 +2193,7 @@ app.registerExtension({
         while (history.length > HISTORY_CAP) {
           const dropped = history.shift();
           dropped.thumbEl?.remove();
+          dropLatent(dropped);
           if (dropped === tailSourceEntry) tailSourceEntry = null;
         }
         makeThumb(entry);
@@ -2160,6 +2246,7 @@ app.registerExtension({
           while (history.length > HISTORY_CAP) {
             const dropped = history.shift();
             dropped.thumbEl?.remove();
+            dropLatent(dropped);
             if (dropped === tailSourceEntry) tailSourceEntry = null;
           }
           makeThumb(entry);
@@ -2251,8 +2338,12 @@ app.registerExtension({
         if (flags.every(Boolean)) return;
         const activeEntry = history[activeIdx] || null;
         history = history.filter((e, i) => {
-          if (!flags[i]) e.thumbEl?.remove();
-          return flags[i];
+          if (!flags[i]) {
+            e.thumbEl?.remove();
+            dropLatent(e);
+            return false;
+          }
+          return true;
         });
         // If the tail source got pruned, forget it so the loadEntry below
         // triggers a fresh sync.
@@ -2665,6 +2756,7 @@ app.registerExtension({
         };
         leftCol.querySelectorAll("[data-sec]").forEach(el=>el.onclick=(e)=>{e.stopPropagation();open[el.dataset.sec]=!open[el.dataset.sec];save();render();});
         leftCol.querySelectorAll("[data-src]").forEach(el=>el.onclick=(e)=>{e.stopPropagation();st.source_type=el.dataset.src;st.model_file="";save();render();});
+        leftCol.querySelectorAll("[data-sage]").forEach(el=>el.onclick=(e)=>{e.stopPropagation();st.sage=el.dataset.sage==="on";save();render();});
         leftCol.querySelectorAll("[data-mode]").forEach(el=>el.onclick=(e)=>{e.stopPropagation();st.mode=el.dataset.mode;save();render();});
         leftCol.querySelectorAll("[data-ratio]").forEach(b=>b.addEventListener("click",e=>{
           e.stopPropagation();
@@ -2710,8 +2802,10 @@ app.registerExtension({
           });
         });
         leftCol.querySelectorAll("[data-enc-format]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.format=b.dataset.encFormat;save();render();});
-        leftCol.querySelectorAll("[data-enc-codec]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.codec=b.dataset.encCodec;save();render();});
+        leftCol.querySelectorAll("[data-enc-codec]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();snapEncodeCodec(st, b.dataset.encCodec);save();render();});
         leftCol.querySelectorAll("[data-enc-quality]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.quality=b.dataset.encQuality;save();render();});
+        leftCol.querySelectorAll("[data-vsr-resize]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.vsr_resize_type=b.dataset.vsrResize;save();render();});
+        leftCol.querySelectorAll("[data-vsr-quality]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.vsr_quality=b.dataset.vsrQuality;save();render();});
         leftCol.querySelectorAll("[data-chk]").forEach(el=>el.onclick=(e)=>{
           e.stopPropagation();
           const f=el.dataset.chk;
@@ -3364,6 +3458,7 @@ app.registerExtension({
           allModels = await (await fetch("/ltx23_oasis/models")).json();
           applyArchs(allModels);
           if(!Array.isArray(allModels.latent_upsamplers)) allModels.latent_upsamplers = [];
+          if(typeof allModels.rtx_vsr !== "boolean") allModels.rtx_vsr = false;
         }catch(e){ console.warn("[LTX Oasis]",e); }
         try{
           const oi = await (await fetch("/object_info/KSampler")).json();
@@ -3464,6 +3559,7 @@ app.registerExtension({
             let idx = typeof o.preview.activeIdx === "number" ? o.preview.activeIdx | 0 : history.length - 1;
             idx = Math.min(history.length - 1, Math.max(0, idx));
             loadEntry(idx, { autoplay: false });   // passive restore, no surprise audio
+            sweepLatents();
           }
           // Apply the restored playMode AFTER history is loaded, so cycle
           // mode snapshots the restored entries into cycleQueue. If saved

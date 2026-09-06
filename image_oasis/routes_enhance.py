@@ -31,6 +31,7 @@ import threading
 import folder_paths
 from server import PromptServer
 from aiohttp import web
+from oasis_csrf import require_same_origin
 
 
 # ── Model directory: models/LLM only, gguf + safetensors listed ───────────────
@@ -499,6 +500,7 @@ async def image_oasis_llm_recommended(request):
 
 
 @routes.post("/image_oasis/enhance")
+@require_same_origin
 async def image_oasis_enhance(request):
     try:
         data = await request.json()

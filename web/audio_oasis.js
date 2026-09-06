@@ -110,17 +110,34 @@ const CSS = `
 .ao-widget .ao-play-btn:hover{background:var(--io-accent,#6f8bbd);}
 .ao-widget .ao-play-btn:disabled{opacity:.4;cursor:default;}
 .ao-widget .ao-time{font-family:var(--io-mono,'Space Mono',monospace);font-size:10px;color:#ddd;letter-spacing:.03em;white-space:nowrap;}
-.ao-widget .ao-split-tools{display:flex;align-items:center;gap:6px;}
+.ao-widget .ao-split-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .ao-widget .ao-split-tools .ao-input{flex:0 0 56px;text-align:center;}
+.ao-widget .ao-tog-grp{display:inline-flex;border:1px solid var(--io-bd,#3a3a3a);border-radius:4px;overflow:hidden;flex-shrink:0;}
+.ao-widget .ao-tog{background:#191919;border:none;border-right:1px solid var(--io-bd,#3a3a3a);color:#bbb;font-family:var(--io-mono,'Space Mono',monospace);font-size:10px;padding:4px 8px;cursor:pointer;line-height:1.2;}
+.ao-widget .ao-tog:last-child{border-right:none;}
+.ao-widget .ao-tog:hover{color:#fff;}
+.ao-widget .ao-tog.active{background:var(--io-accent-dim,#4a5d82);color:#fff;}
 .ao-widget .ao-seg-list{display:flex;flex-direction:column;gap:4px;}
 .ao-widget .ao-seg-row{display:flex;align-items:center;gap:6px;background:#191919;border:1px solid var(--io-bd,#3a3a3a);border-radius:4px;padding:4px 6px;}
 .ao-widget .ao-seg-row.ao-selected{border-color:var(--io-accent,#6f8bbd);background:#20263a;}
 .ao-widget .ao-seg-row.ao-draggable{cursor:grab;}
 .ao-widget .ao-seg-idx{font-family:var(--io-mono,'Space Mono',monospace);font-size:10px;color:var(--io-dim,#888);width:20px;flex-shrink:0;}
 .ao-widget .ao-seg-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;cursor:pointer;}
+.ao-widget .ao-seg-main.ao-pending{cursor:default;}
 .ao-widget .ao-seg-times{font-family:var(--io-mono,'Space Mono',monospace);font-size:10px;color:#ddd;}
 .ao-widget .ao-frames{font-family:var(--io-mono,'Space Mono',monospace);font-size:9px;color:var(--io-go-bd,#4f7a56);margin-left:4px;}
 .ao-widget .ao-frames-bad{color:#e0a050;}
+.ao-widget .ao-len{display:flex;align-items:stretch;flex-shrink:0;border:1px solid var(--io-bd,#3a3a3a);border-radius:3px;overflow:hidden;background:#111;}
+.ao-widget .ao-len-n{width:34px;border:none;background:transparent;color:#ddd;font-family:var(--io-mono,'Space Mono',monospace);font-size:10px;text-align:right;padding:0 1px 0 4px;outline:none;-moz-appearance:textfield;}
+.ao-widget .ao-len-n:focus{color:#fff;}
+.ao-widget .ao-len-n.ao-frames-bad{color:#e0a050;}
+.ao-widget .ao-len-n::-webkit-outer-spin-button,.ao-widget .ao-len-n::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.ao-widget .ao-len-unit{font-family:var(--io-mono,'Space Mono',monospace);font-size:9px;color:var(--io-dim,#888);padding-right:4px;align-self:center;}
+.ao-widget .ao-len-btns{display:flex;flex-direction:column;border-left:1px solid var(--io-bd,#3a3a3a);}
+.ao-widget .ao-len-btn{width:16px;height:11px;padding:0;margin:0;border:none;background:#191919;color:#bbb;cursor:pointer;font-size:7px;line-height:1;display:flex;align-items:center;justify-content:center;}
+.ao-widget .ao-len-btn:hover{color:#fff;background:#222;}
+.ao-widget .ao-len-btn:disabled{opacity:.35;cursor:default;color:#bbb;background:#191919;}
+.ao-widget .ao-len-btn + .ao-len-btn{border-top:1px solid var(--io-bd,#3a3a3a);}
 .ao-widget .ao-seg-name{font-size:9px;color:var(--io-dim,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ao-widget .ao-seg-play{width:20px;height:20px;flex-shrink:0;border-radius:3px;border:1px solid var(--io-bd,#3a3a3a);background:#111;color:#bbb;cursor:pointer;font-size:9px;display:flex;align-items:center;justify-content:center;padding:0;}
 .ao-widget .ao-seg-play:hover{border-color:#777;color:#fff;}
@@ -468,10 +485,13 @@ app.registerExtension({
         selected_file: "",     // qualified filename that feeds the AUDIO output
         analysis: null,          // {duration,sample_rate,channels,bpm,key} cached from /analyze
         fps: 25,                   // frame rate the chop grid is quantized to
-        snap: "8n1",                 // "off" | "frame" | "8n1"
+        snap: "8n1",                 // "off" | "frame" | "8n1" | "17k5"
+        drag: "shift",               // "shift" = move later chops with this one
+        split_every: 8,              // bulk-split step; unit is split_unit
+        split_unit: "s",             // "s" seconds | "f" frames
       });
       let st = defaultState();
-      let uiState = { open: { load: true, grid: true, analysis: true, help: false, theme: false }, autoSplit: 8 };
+      let uiState = { open: { load: true, grid: true, analysis: true, help: false, theme: false } };
       // Per-node draft text for the "save current palette as" field. Not
       // persisted: it's a transient input, not part of the node's state.
       let themeName = "";
@@ -481,9 +501,12 @@ app.registerExtension({
       let peaks = null;           // {min:Float32Array,max:Float32Array,n} downsampled for drawing
       let stats = null;           // {peakDb,rmsDb} computed once per decode, NOT per render
       let dragIdx = -1;           // index into st.points currently being dragged, or -1
+      let dragOrigin = null;      // st.points snapshot at pointerdown (shift-drag)
+      let dragKind = "shift";     // frozen for this gesture; Alt inverts the toggle
       let loading = false, loadError = "";
       let analyzing = false, analyzeError = "";
-      let saving = false, saveError = "";
+      let saving = false, saveError = "", pickHint = "";
+      let lenFocus = -1;          // restore the frame stepper after a re-render
       let rafId = null;
       let savedSets = null;       // /audio_oasis/saved_tracks payload, fetched on demand
       let savedOpen = false, savedLoading = false, savedError = "";
@@ -499,27 +522,33 @@ app.registerExtension({
         && (st.saved_sig === boundarySig() || st.saved_sig === legacySig());
       const boundaries = () => [0, ...st.points, st.duration].filter((v, i, a) => i === 0 || v > a[i - 1]);
 
-      // ── Frame grid / LTX 8n+1 quantization ───────────────────────────
-      // LTX wants a frame count of 8n+1 per clip. If EVERY segment is 8n+1
-      // then, chaining from boundary 0 at frame 0, boundary j must sit on a
-      // frame ≡ j (mod 8). That makes each handle's legal positions a fixed
-      // lattice of its own -- independent of where its neighbours currently
-      // are -- so dragging one handle can never invalidate another.
+      // ── Frame grid / LTX 8n+1 and H3 17k+5 quantization ──────────────
+      // LTX: every legal clip is 8n+1. Chaining from frame 0, boundary j
+      // sits on a frame ≡ j (mod 8). H3: every legal clip is 17k+5, so
+      // boundary j sits on a frame ≡ 5j (mod 17). In both cases each
+      // handle's legal positions are a fixed lattice of its own, so a
+      // stretch-drag of one handle cannot invalidate another. A shift-drag
+      // moves later handles by a whole stride so their residues stay put.
       // st.points[i] is boundary i+1.
       const fps = () => Math.max(1, Number(st.fps) || 25);
       const toFrame = (t) => t * fps();
       const frameToTime = (f) => f / fps();
       const totalFrames = () => Math.floor(st.duration * fps() + 1e-6);
-      const MIN_SEG_FRAMES = 9;   // 8*1+1; 8*0+1 is a single frame, useless
-      const minGap = () => (st.snap === "8n1" ? MIN_SEG_FRAMES : 1);
+      const isGridSnap = () => st.snap === "8n1" || st.snap === "17k5";
+      const gridStride = () => (st.snap === "17k5" ? 17 : st.snap === "8n1" ? 8 : 1);
+      const minGap = () => (st.snap === "8n1" ? 9 : st.snap === "17k5" ? 22 : 1);
+      const gridResidue = (bIndex) => (st.snap === "17k5"
+        ? (((5 * bIndex) % 17) + 17) % 17
+        : (((bIndex % 8) + 8) % 8));
 
       const snapFrame = (frame, bIndex) => {
         if (st.snap === "off") return frame;
         if (st.snap === "frame") return Math.round(frame);
-        const target = ((bIndex % 8) + 8) % 8;
+        const stride = gridStride();
+        const target = gridResidue(bIndex);
         const base = Math.round(frame);
-        const delta = (((target - base) % 8) + 8) % 8;
-        const up = base + delta, down = up - 8;
+        const delta = (((target - base) % stride) + stride) % stride;
+        const up = base + delta, down = up - stride;
         return (Math.abs(up - frame) <= Math.abs(frame - down)) ? up : down;
       };
 
@@ -529,18 +558,35 @@ app.registerExtension({
         if (loFrame > hiFrame) return null;
         if (st.snap === "off") return Math.max(frameToTime(loFrame), Math.min(frameToTime(hiFrame), t));
         let f = snapFrame(toFrame(t), bIndex);
-        const stride = st.snap === "8n1" ? 8 : 1;
+        const stride = gridStride();
         while (f < loFrame) f += stride;
         while (f > hiFrame) f -= stride;
         return f < loFrame ? null : frameToTime(f);
+      };
+
+      const nearestLegal = (f) => {
+        if (st.snap === "8n1") return 8 * Math.max(1, Math.round((f - 1) / 8)) + 1;
+        if (st.snap === "17k5") return 17 * Math.max(1, Math.round((f - 5) / 17)) + 5;
+        return Math.max(1, Math.round(f));
       };
 
       const segFrameLens = () => {
         const b = [0, ...st.points.map((p) => Math.round(toFrame(p))), totalFrames()];
         return b.slice(1).map((v, i) => v - b[i]);
       };
-      const isValidLen = (L) => st.snap !== "8n1" || (L > 0 && L % 8 === 1);
-      const nearest8n1 = (f) => 8 * Math.max(1, Math.round((f - 1) / 8)) + 1;
+      const isValidLen = (L) => {
+        if (st.snap === "8n1") return L > 0 && L % 8 === 1;
+        if (st.snap === "17k5") return L >= 5 && (L - 5) % 17 === 0;
+        return true;
+      };
+      const lenTitle = (L, good) => {
+        if (st.snap === "8n1")
+          return good ? `8*${(L - 1) / 8}+1 frames` : "not 8n+1 -- LTX will reject this length";
+        if (st.snap === "17k5")
+          return good ? `17*${(L - 5) / 17}+5 frames` : "not 17k+5 -- H3 will reject this length";
+        return `${L} frames`;
+      };
+      const gridFlag = () => (st.snap === "8n1" ? "8n+1" : st.snap === "17k5" ? "17k+5" : "");
 
       // getValue() always reads the live `st`/`uiState` references on demand
       // (workflow save, queue-prompt serialize) -- there is nothing to push
@@ -619,6 +665,14 @@ app.registerExtension({
       inner.appendChild(transportSlot);
       inner.appendChild(body);
       container.appendChild(audio);
+
+      // Keep node drag / canvas zoom / output-socket hits from fighting the
+      // widget. Segments sit in the right pane under the AUDIO socket; without
+      // these, LiteGraph swallows the click. Same stoppers as the other Oasis
+      // nodes. Attach once, not per-render.
+      for (const ev of ["pointerdown", "mousedown", "wheel"]) {
+        container.addEventListener(ev, (e) => e.stopPropagation());
+      }
 
       // Same mode-4 toggle as Image Oasis's footer button (rgthree-style
       // bypass without leaving the node).
@@ -733,10 +787,110 @@ app.registerExtension({
       const timeToFrac = (t) => (st.duration ? t / st.duration : 0);
       const fracToTime = (f) => Math.max(0, Math.min(st.duration, f * st.duration));
 
+      const handleTitle = (t) => {
+        const how = (st.drag === "stretch" ? "stretch this segment" : "shift later chops with it");
+        return st.snap === "off"
+          ? `Chop point at ${fmtTime(t)} -- drag to ${how}, double-click to remove`
+          : `Chop point at ${fmtTime(t)} (frame ${Math.round(toFrame(t))}) -- drag to ${how}, Alt inverts, double-click to remove`;
+      };
+
+      const applyStretch = (idx, t) => {
+        const gap = minGap();
+        const loF = (idx > 0 ? Math.round(toFrame(st.points[idx - 1])) : 0) + gap;
+        const hiF = (idx < st.points.length - 1
+          ? Math.round(toFrame(st.points[idx + 1]))
+          : totalFrames()) - gap;
+        const snapped = snapTime(t, idx + 1, loF, hiF);
+        if (snapped == null) return false;
+        st.points[idx] = snapped;
+        return true;
+      };
+
+      // Next legal length in `dir` (+1 longer / -1 shorter). Grid snap walks
+      // 8n+1 or 17k+5; frames/off step by 1. Does not move points.
+      const stepLen = (L, dir) => {
+        const stride = isGridSnap() ? gridStride() : 1;
+        const minL = minGap();
+        if (!isGridSnap()) return Math.max(minL, L + dir * stride);
+        if (dir > 0) {
+          let x = nearestLegal(L);
+          if (x <= L) x += stride;
+          return x;
+        }
+        let x = nearestLegal(L);
+        if (x >= L) x -= stride;
+        return Math.max(minL, x);
+      };
+
+      // Stretch this segment to `targetL` frames. Non-last rows move the end
+      // chop; the last row moves its start (track end is fixed). Neighbour
+      // absorbs the difference -- same as a stretch-drag on that handle.
+      const setSegLen = (i, targetL) => {
+        if (!st.duration || !st.points.length) return false;
+        const b = [0, ...st.points.map((p) => Math.round(toFrame(p))), totalFrames()];
+        const nSeg = b.length - 1;
+        if (i < 0 || i >= nSeg) return false;
+        let L = Math.max(minGap(), Math.round(Number(targetL) || 0));
+        if (isGridSnap()) L = nearestLegal(L);
+        if (L < minGap()) L = minGap();
+        if (i === nSeg - 1) return applyStretch(i - 1, frameToTime(b[i + 1] - L));
+        return applyStretch(i, frameToTime(b[i] + L));
+      };
+
+      const nudgeSeg = (i, dir) => {
+        const L = segFrameLens()[i];
+        return L == null ? false : setSegLen(i, stepLen(L, dir));
+      };
+
+      const canNudge = (i, dir) => {
+        const before = st.points.slice();
+        const beforeL = segFrameLens()[i];
+        try {
+          if (!nudgeSeg(i, dir)) return false;
+          return segFrameLens()[i] !== beforeL;
+        } finally {
+          st.points = before;
+        }
+      };
+
+      const applyShift = (idx, t) => {
+        const origin = dragOrigin;
+        if (!origin || !origin.length) return applyStretch(idx, t);
+        const n = origin.length;
+        const gap = minGap();
+        if (st.snap === "off") {
+          const minT = (idx > 0 ? origin[idx - 1] : 0) + frameToTime(gap);
+          const maxT = st.duration - frameToTime(gap) - (origin[n - 1] - origin[idx]);
+          if (minT > maxT) return false;
+          const desired = Math.max(minT, Math.min(maxT, t));
+          const d = desired - origin[idx];
+          for (let j = idx; j < n; j++) st.points[j] = origin[j] + d;
+          return true;
+        }
+        const originF = origin.map((p) => Math.round(toFrame(p)));
+        const stride = isGridSnap() ? gridStride() : 1;
+        let dF = snapFrame(toFrame(t), idx + 1) - originF[idx];
+        dF = Math.round(dF / stride) * stride;
+        const minDF = ((idx > 0 ? originF[idx - 1] : 0) + gap) - originF[idx];
+        const maxDF = (totalFrames() - gap) - originF[n - 1];
+        while (dF < minDF) dF += stride;
+        while (dF > maxDF) dF -= stride;
+        if (dF < minDF || dF > maxDF) return false;
+        for (let j = idx; j < n; j++) st.points[j] = frameToTime(originF[j] + dF);
+        return true;
+      };
+
+      const paintHandlesFrom = (idx) => {
+        const els = handleLayer.querySelectorAll(".ao-handle");
+        for (let j = idx; j < st.points.length; j++) {
+          const el = els[j];
+          if (!el) continue;
+          el.style.left = `${timeToFrac(st.points[j]) * 100}%`;
+          el.title = handleTitle(st.points[j]);
+        }
+      };
+
       const renderHandles = () => {
-        const handleTitle = (t) => (st.snap === "off"
-          ? `Chop point at ${fmtTime(t)} -- drag to move, double-click to remove`
-          : `Chop point at ${fmtTime(t)} (frame ${Math.round(toFrame(t))}) -- drag to move, double-click to remove`);
         const els = handleLayer.querySelectorAll(".ao-handle");
         els.forEach((el) => el.remove());
         st.points.forEach((t, idx) => {
@@ -746,27 +900,26 @@ app.registerExtension({
           el.title = handleTitle(t);
           el.addEventListener("pointerdown", (e) => {
             e.preventDefault(); e.stopPropagation();
-            dragIdx = idx; el.classList.add("dragging");
+            dragIdx = idx;
+            dragOrigin = st.points.slice();
+            dragKind = st.drag === "stretch" ? "stretch" : "shift";
+            if (e.altKey) dragKind = dragKind === "shift" ? "stretch" : "shift";
+            el.classList.add("dragging");
             try { el.setPointerCapture(e.pointerId); } catch { /* capture unsupported; drag still tracks via pointermove */ }
           });
           el.addEventListener("pointermove", (e) => {
             if (dragIdx !== idx) return;
             const rect = wavePane.getBoundingClientRect();
             const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-            const gap = minGap();
-            const loF = (idx > 0 ? Math.round(toFrame(st.points[idx - 1])) : 0) + gap;
-            const hiF = (idx < st.points.length - 1
-              ? Math.round(toFrame(st.points[idx + 1]))
-              : totalFrames()) - gap;
-            const snapped = snapTime(fracToTime(frac), idx + 1, loF, hiF);
-            if (snapped == null) return;   // no legal frame in this gap
-            st.points[idx] = snapped;
-            el.style.left = `${timeToFrac(snapped) * 100}%`;
-            el.title = handleTitle(snapped);
+            const ok = dragKind === "stretch"
+              ? applyStretch(idx, fracToTime(frac))
+              : applyShift(idx, fracToTime(frac));
+            if (!ok) return;
+            paintHandlesFrom(dragKind === "stretch" ? idx : idx);
           });
           const commit = (e) => {
             if (dragIdx !== idx) return;
-            dragIdx = -1; el.classList.remove("dragging");
+            dragIdx = -1; dragOrigin = null; el.classList.remove("dragging");
             st.points.sort((a, b) => a - b);
             save(); renderRight(); renderHandles();
           };
@@ -789,8 +942,8 @@ app.registerExtension({
       // Inserting or removing a boundary shifts every LATER boundary's index
       // by one, which changes its required residue -- so the tail has to be
       // re-snapped. Points before the edit keep their index and residue, so
-      // re-snapping them is a no-op; downstream ones move by at most a frame
-      // or two. This is inherent to the 8n+1 chain, not avoidable.
+      // re-snapping them is a no-op; downstream ones move by at most a
+      // stride. This is inherent to the chained grid, not avoidable.
       const requantizeAll = () => {
         if (st.snap === "off" || !st.duration) return;
         const gap = minGap(), total = totalFrames(), n = st.points.length;
@@ -932,11 +1085,11 @@ app.registerExtension({
       // ── Save segments ──
       const runSave = async () => {
         if (!st.track_file || saving) return;
-        saving = true; saveError = ""; renderRight();
+        saving = true; saveError = ""; pickHint = ""; renderRight();
         try {
           const r = await (await fetch("/audio_oasis/save_segments", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filename: st.track_file, track_name: st.track_name, points: st.points, fps: fps() }),
+            body: JSON.stringify({ filename: st.track_file, track_name: st.track_name, points: st.points, fps: fps(), snap: st.snap }),
           })).json();
           if (r.error) throw new Error(r.error);
           st.segments = r.segments || [];
@@ -981,6 +1134,7 @@ app.registerExtension({
         if (!segs.length) { savedError = "Manifest has no segments."; renderLeft(); return; }
         st.track_name = m.track_name || st.track_name;
         if (m.fps) st.fps = m.fps;
+        if (m.snap === "off" || m.snap === "frame" || m.snap === "8n1" || m.snap === "17k5") st.snap = m.snap;
         st.points = segs.slice(1)
           .map((s) => s.start)
           .filter((v) => typeof v === "number" && v > 0);
@@ -1020,12 +1174,26 @@ app.registerExtension({
         }
       };
 
+      const splitStrideFrames = () => {
+        const n = Number(st.split_every);
+        if (st.split_unit === "f") {
+          const raw = Math.max(1, Math.round(Number.isFinite(n) ? n : 1));
+          return isGridSnap() ? nearestLegal(raw) : raw;
+        }
+        const secs = Math.max(0.1, Number.isFinite(n) ? n : 8);
+        const raw = secs * fps();
+        return isGridSnap() ? nearestLegal(raw) : Math.max(1, Math.round(raw));
+      };
+
       // ── Transport strip (full width, under the scrub bar) ──
       const renderTransport = () => {
         const hasTrack = !!st.track_file;
-        const stepFrames = st.snap === "8n1"
-          ? nearest8n1((uiState.autoSplit || 8) * fps())
-          : Math.max(1, Math.round((uiState.autoSplit || 8) * fps()));
+        const unitF = st.split_unit === "f";
+        const stepFrames = splitStrideFrames();
+        const stepSecs = stepFrames / fps();
+        const preview = (!unitF && st.snap === "off")
+          ? ""
+          : ` \u2192 <b style="color:#ddd">${stepFrames}f</b> (${stepSecs.toFixed(3)}s)`;
 
         transportSlot.innerHTML = `
           <div class="ao-row ao-transport">
@@ -1033,8 +1201,12 @@ app.registerExtension({
             <span class="ao-time" data-ao-time>${fmtTime(audio.currentTime || 0)} / ${fmtTime(st.duration)}</span>
             <div class="ao-split-tools" style="margin-left:auto">
               <span class="ao-mini">split every</span>
-              <input class="ao-input" type="number" data-auto-split value="${uiState.autoSplit}" min="0.1" step="0.5"/>
-              <span class="ao-mini">s${st.snap !== "off" ? ` \u2192 <b style="color:#ddd">${stepFrames}f</b> (${(stepFrames / fps()).toFixed(3)}s)` : ""}</span>
+              <input class="ao-input" type="number" data-auto-split value="${st.split_every}" min="${unitF ? 1 : 0.1}" step="${unitF ? 1 : 0.5}"/>
+              <div class="ao-tog-grp">
+                <button class="ao-tog${!unitF ? " active" : ""}" data-split-unit="s" title="Step in seconds">s</button>
+                <button class="ao-tog${unitF ? " active" : ""}" data-split-unit="f" title="Step in frames at the Grid FPS">f</button>
+              </div>
+              <span class="ao-mini">${preview}</span>
               <button class="ao-btn ao-btn-flat" data-apply-split ${hasTrack ? "" : "disabled"}>Apply</button>
               <button class="ao-btn ao-btn-flat" data-clear-points ${st.points.length ? "" : "disabled"}>Clear</button>
             </div>
@@ -1042,22 +1214,35 @@ app.registerExtension({
 
         transportSlot.querySelector("[data-play-track]")?.addEventListener("click", (e) => { e.stopPropagation(); togglePlayTrack(); });
         transportSlot.querySelector("[data-auto-split]")?.addEventListener("change", (e) => {
-          uiState.autoSplit = Math.max(0.5, parseFloat(e.target.value) || 8);
+          const v = parseFloat(e.target.value);
+          st.split_every = unitF
+            ? Math.max(1, Math.round(Number.isFinite(v) ? v : 1))
+            : Math.max(0.1, Number.isFinite(v) ? v : 8);
           renderTransport();
+        });
+        transportSlot.querySelectorAll("[data-split-unit]").forEach((b) => {
+          b.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const next = b.dataset.splitUnit;
+            if (next === st.split_unit) return;
+            if (next === "f") {
+              st.split_every = splitStrideFrames();
+            } else {
+              st.split_every = Math.max(0.1, Math.round((Number(st.split_every) / fps()) * 1000) / 1000);
+            }
+            st.split_unit = next;
+            save(); renderTransport();
+          });
         });
         transportSlot.querySelector("[data-apply-split]")?.addEventListener("click", (e) => {
           e.stopPropagation();
           const total = totalFrames();
           const pts = [];
-          if (st.snap === "off") {
-            const step = Math.max(0.1, uiState.autoSplit || 8);
+          if (st.snap === "off" && st.split_unit !== "f") {
+            const step = Math.max(0.1, Number(st.split_every) || 8);
             for (let t = step; t < st.duration - 0.05; t += step) pts.push(t);
           } else {
-            // Exact frame stride, so every segment but the tail is identical
-            // and (in 8n+1 mode) a legal LTX length.
-            const stride = st.snap === "8n1"
-              ? nearest8n1((uiState.autoSplit || 8) * fps())
-              : Math.max(1, Math.round((uiState.autoSplit || 8) * fps()));
+            const stride = splitStrideFrames();
             for (let f = stride; f <= total - minGap(); f += stride) pts.push(frameToTime(f));
           }
           st.points = pts;
@@ -1125,10 +1310,19 @@ app.registerExtension({
               <option value="off"${st.snap === "off" ? " selected" : ""}>Snap: off</option>
               <option value="frame"${st.snap === "frame" ? " selected" : ""}>Snap: frames</option>
               <option value="8n1"${st.snap === "8n1" ? " selected" : ""}>Snap: 8n+1 (LTX)</option>
+              <option value="17k5"${st.snap === "17k5" ? " selected" : ""}>Snap: 17k+5 (H3)</option>
             </select>
           </div>
           <div class="ao-row">
-            ${st.snap !== "off" && st.duration ? `<span class="ao-mini">1 frame = ${(1000 / fps()).toFixed(1)}ms \u00b7 track = ${totalFrames()}f</span>` : ""}
+            <span class="ao-label">Drag</span>
+            <div class="ao-tog-grp">
+              <button class="ao-tog${st.drag !== "stretch" ? " active" : ""}" data-drag="shift" title="Move this chop and every later one together. Later segments keep the length they started at.">shift later</button>
+              <button class="ao-tog${st.drag === "stretch" ? " active" : ""}" data-drag="stretch" title="Move only this chop. The next segment grows or shrinks.">stretch</button>
+            </div>
+            <span class="ao-mini">Alt inverts for one drag</span>
+          </div>
+          <div class="ao-row">
+            ${st.snap !== "off" && st.duration ? `<span class="ao-mini">1 frame = ${(1000 / fps()).toFixed(1)}ms \u00b7 track = ${totalFrames()}f${st.snap === "17k5" ? " \u00b7 H3 native 24 fps" : ""}</span>` : ""}
             <button class="ao-btn ao-btn-flat" style="margin-left:auto" data-fix-points ${st.points.length && st.snap !== "off" ? "" : "disabled"}>Re-snap</button>
           </div>
           ${facts}`;
@@ -1262,6 +1456,13 @@ app.registerExtension({
           st.snap = e.target.value; requantizeAll();
           save(); renderTransport(); renderLeft(); renderRight(); renderHandles();
         });
+        leftSlot.querySelectorAll("[data-drag]").forEach((b) => {
+          b.addEventListener("click", (e) => {
+            e.stopPropagation();
+            st.drag = b.dataset.drag;
+            save(); renderLeft(); renderHandles();
+          });
+        });
         leftSlot.querySelector("[data-fix-points]")?.addEventListener("click", (e) => {
           e.stopPropagation(); requantizeAll();
           save(); renderRight(); renderHandles();
@@ -1369,38 +1570,61 @@ app.registerExtension({
           const selected = qualified ? st.selected_file === qualified : false;
           const L = fLens[i];
           const good = isValidLen(L);
+          const adjustable = st.points.length > 0;
           const frameTag = st.snap === "off" ? ""
-            : `<span class="ao-frames${good ? "" : " ao-frames-bad"}" title="${good ? `8*${(L - 1) / 8}+1 frames` : "not 8n+1 -- LTX will reject this length"}">${L}f${st.snap === "8n1" ? (good ? " \u2713" : " \u26a0") : ""}</span>`;
+            : `<span class="ao-frames${good ? "" : " ao-frames-bad"}" title="${lenTitle(L, good)}">${L}f${isGridSnap() ? (good ? " \u2713" : " \u26a0") : ""}</span>`;
+          const stride = isGridSnap() ? gridStride() : 1;
+          const chopHint = i === previewSegs.length - 1
+            ? "Moves this row's start chop (track end is fixed)."
+            : "Moves this row's end chop; the next segment absorbs the difference.";
+          const lenCtl = adjustable
+            ? `<div class="ao-len" data-seg-len="${i}" title="${lenTitle(L, good)}. Arrows step by ${stride}f. ${chopHint}">
+                <input class="ao-len-n${good ? "" : " ao-frames-bad"}" type="number" data-len-input="${i}" value="${L}" step="${stride}" min="${minGap()}"/>
+                <span class="ao-len-unit">f</span>
+                <div class="ao-len-btns">
+                  <button type="button" class="ao-len-btn" data-len-nudge="1" ${canNudge(i, 1) ? "" : "disabled"} title="Longer by ${stride}f">\u25b2</button>
+                  <button type="button" class="ao-len-btn" data-len-nudge="-1" ${canNudge(i, -1) ? "" : "disabled"} title="Shorter by ${stride}f">\u25bc</button>
+                </div>
+              </div>`
+            : "";
           return `<div class="ao-seg-row${selected ? " ao-selected" : ""}${qualified ? " ao-draggable" : ""}" data-seg-row="${i}" ${qualified ? `draggable="true"` : ""}>
             <span class="ao-seg-idx">${i + 1}</span>
-            <div class="ao-seg-main" data-seg-select="${i}">
-              <span class="ao-seg-times">${fmtTime(seg.start)} \u2013 ${fmtTime(seg.end)} (${fmtTime(seg.end - seg.start)}) ${frameTag}</span>
+            <div class="ao-seg-main${qualified ? "" : " ao-pending"}" data-seg-select="${i}"${qualified ? "" : ` title="Save segments first \u2014 the AUDIO output needs a real file"`}>
+              <span class="ao-seg-times">${fmtTime(seg.start)} \u2013 ${fmtTime(seg.end)} (${fmtTime(seg.end - seg.start)})${adjustable ? "" : " " + frameTag}</span>
               <span class="ao-seg-name">${savedSeg ? esc(savedSeg.filename) + (fileOk ? "" : " (file missing)") : "not saved yet"}</span>
             </div>
+            ${lenCtl}
             <button class="ao-seg-play" data-seg-play="${i}" title="Play this segment">\u25b6</button>
             ${qualified ? `<span class="ao-seg-grip" title="Drag onto LTX Oasis's audio slot">\u22ee\u22ee</span>` : ""}
           </div>`;
         }).join("");
 
         const unsavedNote = hasTrack && !saved && st.points.length
-          ? `<div class="ao-mini ao-unsaved-note">Unsaved changes \u2014 save to get real files you can drag out.</div>`
+          ? `<div class="ao-mini ao-unsaved-note">Unsaved chops \u2014 the whole track is already the AUDIO output. Save before you can select a segment (or drag one out).</div>`
           : (hasTrack && !st.points.length
-            ? `<div class="ao-mini">No chop points yet: saving keeps the whole track as one segment.</div>`
+            ? `<div class="ao-mini">No chop points yet: the whole track feeds the AUDIO output. Saving keeps it as one segment.</div>`
             : "");
 
         // The tail almost never lands on 8n+1 by luck -- the track just ends
         // where it ends. Flag it rather than silently trimming the user's audio.
-        const badNote = (st.snap === "8n1" && badCount)
-          ? `<div class="ao-mini ao-frames-bad">\u26a0 ${badCount} segment${badCount > 1 ? "s" : ""} not 8n+1 (usually the last one \u2014 the track just ends where it ends). Drag its handle, delete it, or leave it and don't feed that one to LTX.</div>`
+        const badNote = (isGridSnap() && badCount)
+          ? `<div class="ao-mini ao-frames-bad">\u26a0 ${badCount} segment${badCount > 1 ? "s" : ""} not ${gridFlag()} (usually the last one \u2014 the track just ends where it ends). Drag its handle, delete it, or leave it and don't feed that one to the model.</div>`
           : "";
 
         const trackSelected = st.selected_file === st.track_file;
+        const trackTitle = !hasTrack ? ""
+          : trackSelected
+            ? (saved
+              ? "The whole track feeds the AUDIO output. Click a segment below to switch."
+              : "The whole track already feeds the AUDIO output. Save segments, then click a row to switch.")
+            : "Send the whole track to the AUDIO output instead of a single segment.";
 
         rightSlot.innerHTML = `
-          <button class="ao-fulltrack${trackSelected ? " active" : ""}" data-seg-track-row ${hasTrack ? "" : "disabled"} title="${trackSelected ? "The whole track feeds the AUDIO output. Click a segment below to switch." : "Send the whole track to the AUDIO output instead of a single segment."}">Use full track as output</button>
+          <button class="ao-fulltrack${trackSelected ? " active" : ""}" data-seg-track-row ${hasTrack ? "" : "disabled"} title="${trackTitle}">Use full track as output</button>
           <div class="ao-seg-list">${segRows || `<div class="ao-empty-hint">Load a track to see segments here.</div>`}</div>
           ${unsavedNote}
           ${badNote}
+          ${pickHint ? `<div class="ao-mini ao-unsaved-note">${esc(pickHint)}</div>` : ""}
           ${saveError ? `<div class="ao-mini ao-error-note">${esc(saveError)}</div>` : ""}
           ${saved ? `<div class="ao-mini ao-ok-note">Saved \u2192 audio_oasis/${esc(st.track_name)}/</div>` : ""}
           <div class="ao-row" style="margin-top:auto;padding-top:4px">
@@ -1411,6 +1635,7 @@ app.registerExtension({
         rightSlot.querySelector("[data-seg-track-row]")?.addEventListener("click", (e) => {
           e.stopPropagation();
           if (!st.track_file) return;
+          pickHint = "";
           st.selected_file = st.track_file; save(); renderRight();
         });
         rightSlot.querySelectorAll("[data-seg-select]").forEach((el) => {
@@ -1419,7 +1644,11 @@ app.registerExtension({
             const i = Number(el.dataset.segSelect);
             const savedSeg = saved ? st.segments[i] : null;
             if (savedSeg && savedSeg.exists !== false) {
+              pickHint = "";
               st.selected_file = savedSeg.qualified; save(); renderRight();
+            } else if (!saved) {
+              pickHint = "Save segments first \u2014 there is no file to send until then.";
+              renderRight();
             }
           });
         });
@@ -1431,6 +1660,40 @@ app.registerExtension({
             if (seg) playRange(seg.start, seg.end);
           });
         });
+        const commitLen = (i) => { save(); lenFocus = i; renderRight(); renderHandles(); };
+        rightSlot.querySelectorAll("[data-seg-len]").forEach((box) => {
+          const i = Number(box.dataset.segLen);
+          box.addEventListener("pointerdown", (e) => e.stopPropagation());
+          box.addEventListener("click", (e) => e.stopPropagation());
+          box.querySelectorAll("[data-len-nudge]").forEach((b) => {
+            b.addEventListener("click", (e) => {
+              e.stopPropagation();
+              if (nudgeSeg(i, Number(b.dataset.lenNudge))) commitLen(i);
+            });
+          });
+          const inp = box.querySelector("[data-len-input]");
+          if (!inp) return;
+          inp.addEventListener("keydown", (e) => {
+            e.stopPropagation();
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+              e.preventDefault();
+              if (nudgeSeg(i, e.key === "ArrowUp" ? 1 : -1)) commitLen(i);
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              inp.blur();
+            }
+          });
+          inp.addEventListener("change", (e) => {
+            e.stopPropagation();
+            if (setSegLen(i, inp.value)) commitLen(i);
+            else renderRight();
+          });
+        });
+        if (lenFocus >= 0) {
+          const inp = rightSlot.querySelector(`[data-len-input="${lenFocus}"]`);
+          lenFocus = -1;
+          if (inp) inp.focus();
+        }
         // Custom in-app drag payload: dragging a saved segment chip onto ANY
         // node's file-drop target (e.g. LTX2.3 Oasis's audio slot) delivers
         // "application/x-oasis-audio" -> the qualified input-folder filename,
@@ -1442,6 +1705,7 @@ app.registerExtension({
           row.addEventListener("dragstart", (e) => {
             const i = Number(row.dataset.segRow);
             const savedSeg = saved ? st.segments[i] : null;
+            if (e.target.closest("[data-seg-len]")) { e.preventDefault(); return; }
             if (!savedSeg || savedSeg.exists === false) { e.preventDefault(); return; }
             e.dataTransfer.setData("application/x-oasis-audio", savedSeg.qualified);
             e.dataTransfer.setData("text/uri-list", viewURL(savedSeg.filename, savedSeg.subfolder));
@@ -1477,7 +1741,7 @@ app.registerExtension({
 
       this.addDOMWidget("audio_oasis_ui", "div", container, {
         hideOnZoom: false,
-        getValue: () => JSON.stringify({ version: 1, exec: st, ui: { open: uiState.open, autoSplit: uiState.autoSplit } }),
+        getValue: () => JSON.stringify({ version: 1, exec: st, ui: { open: uiState.open } }),
         setValue: (v) => {
           try {
             const o = JSON.parse(v);
@@ -1485,7 +1749,8 @@ app.registerExtension({
             if (o.exec && typeof o.exec === "object") st = { ...st, ...o.exec };
             if (o.ui) {
               if (o.ui.open) uiState.open = { ...uiState.open, ...o.ui.open };
-              if (o.ui.autoSplit) uiState.autoSplit = o.ui.autoSplit;
+              if (o.ui.autoSplit != null && o.exec && o.exec.split_every == null)
+                st.split_every = o.ui.autoSplit;
             }
             renderAll();
             if (st.track_file) loadTrackIntoBuffer(st.track_file);

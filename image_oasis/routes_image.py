@@ -26,6 +26,7 @@ import asyncio
 import folder_paths
 from server import PromptServer
 from aiohttp import web
+from oasis_csrf import require_same_origin
 
 
 # ── Vendored helpers (from architect_shared) ──────────────────────────────────
@@ -130,6 +131,7 @@ async def image_oasis_models(request):
 
 
 @routes.post("/image_oasis/flush_cache")
+@require_same_origin
 async def image_oasis_flush_cache(request):
     """Drop all cached models/conditioning/latents across every node instance.
     The per-instance LRU bounds growth automatically; this is the manual big
@@ -227,6 +229,7 @@ async def image_oasis_get_presets(request):
 
 
 @routes.post("/image_oasis/save_preset")
+@require_same_origin
 async def image_oasis_save_preset(request):
     try:
         data = await request.json()
@@ -252,6 +255,7 @@ async def image_oasis_save_preset(request):
 
 
 @routes.delete("/image_oasis/presets/{preset_id}")
+@require_same_origin
 async def image_oasis_delete_preset(request):
     pid = request.match_info["preset_id"]
     _save_presets([p for p in _load_presets() if p.get("id") != pid])
@@ -259,6 +263,7 @@ async def image_oasis_delete_preset(request):
 
 
 @routes.post("/image_oasis/reorder_presets")
+@require_same_origin
 async def image_oasis_reorder_presets(request):
     """Rewrite presets.json in the order specified by `ids` in the request body.
     Any presets on disk not present in `ids` are appended at the end (defensive
@@ -301,6 +306,7 @@ async def image_oasis_get_theme(request):
 
 
 @routes.post("/image_oasis/theme")
+@require_same_origin
 async def image_oasis_save_theme(request):
     try:
         data = await request.json()
@@ -346,6 +352,7 @@ async def image_oasis_get_named_themes(request):
 
 
 @routes.post("/image_oasis/save_named_theme")
+@require_same_origin
 async def image_oasis_save_named_theme(request):
     try:
         data = await request.json()
@@ -377,6 +384,7 @@ async def image_oasis_save_named_theme(request):
 
 
 @routes.delete("/image_oasis/themes/{theme_id}")
+@require_same_origin
 async def image_oasis_delete_named_theme(request):
     tid = request.match_info["theme_id"]
     _save_named_themes([t for t in _load_named_themes() if t.get("id") != tid])
@@ -431,6 +439,7 @@ def _check_checkpoint_bundles(filename):
 
 
 @routes.post("/image_oasis/check_bundle")
+@require_same_origin
 async def image_oasis_check_bundle(request):
     try:
         data = await request.json()
@@ -615,6 +624,7 @@ from PIL.PngImagePlugin import PngInfo as _PngInfo
 
 
 @routes.post("/image_oasis/save")
+@require_same_origin
 async def image_oasis_save(request):
     try:
         data = await request.json()

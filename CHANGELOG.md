@@ -1,5 +1,75 @@
 # Changelog
 
+## v1.8.0
+
+CSRF gate so Manager can treat this as Latest after 1.6/1.7 were banned,
+plus Continue-from-latent, AV1-in-mp4, RTX VSR, and Audio Oasis chop tools.
+Class ids unchanged: `ImageOasis`, `VideoOasisPreview`, `LTX23Oasis`,
+`AudioOasis`.
+
+### Pack / registry
+
+#### Added
+- Same-origin **Origin must match Host** check on mutating POST/DELETE
+  routes (presets, themes, save, save_segments, clip, create movie, enhance).
+  That is the CSRF gate 1.6/1.7 were banned for missing (policy-v0.2
+  UNAUTHENTICATED_SIDE_EFFECT). Same-origin UI fetch already sends Origin; a
+  cross-site form POST does not match and is rejected.
+
+---
+
+### LTX Oasis
+
+#### Added
+- **Continue from viewed video** prefers a cached sampled latent for the clip
+  in the scene bar (same idea as H3 Oasis). Clips with no latent — loaded from
+  disk, Clip, Create Movie — still decode the viewer file.
+- **RTX Video Super Resolution** in Upscale, a toggle above Spatial Upsample.
+  Settings (× Scale or target size, quality) appear when it is on. It calls
+  `RTXVideoSuperResolution` from Nvidia RTX Nodes on the decoded frames.
+  Spatial Upsample still runs in latent first if both are on. Toggling VSR
+  reuses the sampled latent.
+
+#### Changed
+- **AV1** is allowed in mp4 as well as webm (AOMedia ISOBMFF). Auto+AV1 still
+  homes to webm. Create Movie keeps an AV1 mp4 bar in mp4 instead of remuxing
+  it to webm.
+
+---
+
+### Video Oasis Viewer
+
+#### Changed
+- **AV1** is allowed in mp4 as well as webm, same as LTX Oasis. Auto+AV1 still
+  homes to webm. Create Movie keeps an AV1 mp4 bar in mp4.
+
+---
+
+### Audio Oasis
+
+#### Added
+- **Snap: 17k+5 (H3)** next to 8n+1 (LTX), so chops stay legal for MiniMax H3
+  (shortest useful segment is 22 frames).
+- **split every** can step in seconds or in frames at the Grid FPS.
+- **Frame-count stepper** on each segment row: type a length or click the
+  arrows. Steps by the snap grid. Resizes that segment; the neighbour absorbs
+  the difference. The last row moves its start chop (the track end is fixed).
+
+#### Changed
+- Dragging a chop defaults to **shift later** (later segments keep their
+  length). **stretch** is the old one-handle resize. Alt still inverts for
+  one drag.
+- Until you save, the whole track is already the AUDIO output. Unsaved rows
+  no longer look selectable; **Use full track as output** says it is already
+  on. Clicking an unsaved row tells you to save first.
+
+#### Fixed
+- Clicks on the Segments pane (row select, Use full track) were swallowed by
+  the AUDIO output socket. The widget now stops pointer events the same way
+  the other Oasis nodes do.
+
+---
+
 ## v1.7.0
 
 LTX 2.5 support and a rebuild of Create Movie's audio handling. Class ids are

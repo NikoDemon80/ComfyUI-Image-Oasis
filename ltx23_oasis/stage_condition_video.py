@@ -354,8 +354,8 @@ def build_latent_and_conditioning(spec, mode, loaded, gen, refs,
                                   audio_file="", ctx_latent_frames=0,
                                   ctx_audio=None):
     """Dispatch on the registry's latent recipe string. `loaded` is
-    stage_load_video's dict; `gen` carries width/height/frames/fps/
-    conditioning_fps; `refs` carries the start IMAGE tensor and guide specs
+    stage_load_video's dict; `gen` carries width/height/frames/fps;
+    `refs` carries the start IMAGE tensor and guide specs
     [{image(IMAGE), frame_idx, strength}].
 
     `ctx_latent_frames` is the motion-context window (continue-from-viewed):
@@ -404,11 +404,12 @@ def build_latent_and_conditioning(spec, mode, loaded, gen, refs,
                 strength=float(g.get("strength", 1.0)))
             out["used_guides_or_inplace"] = True
 
-        # Stamp the frame rate into conditioning (fully user-editable;
-        # follows working fps unless overridden).
+        # Stamp the frame rate into conditioning. Always the working fps:
+        # any other value tells the model a different amount of time passes
+        # than the clip actually spans, which the audio stream cannot absorb.
         positive, negative = call_node(
             "LTXVConditioning", positive=positive, negative=negative,
-            frame_rate=float(gen.get("conditioning_fps") or gen.get("fps") or 25.0))
+            frame_rate=float(gen.get("fps") or 25.0))
 
         out["video_latent_frames"] = int(latent["samples"].shape[2])
 

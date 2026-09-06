@@ -23,11 +23,16 @@ position.
 1. **Track** section - upload or drop an audio file. The waveform, duration,
    sample rate, channel count, and peak/RMS levels appear immediately
    (decoded in the browser, no server round trip).
-2. Click anywhere on the waveform to drop a chop point. Drag a point to
-   slide it; double-click or right-click a point to remove it. "split every
-   N s" in the transport strip bulk-places evenly spaced points - you can
-   still add, remove, and drag points afterward, freely, on top of an
-   auto-split or a fully manual layout.
+2. Click anywhere on the waveform to drop a chop point. Drag a point:
+   **shift later** (default) moves that chop and every later one, so the
+   segments after it keep their length; **stretch** moves only that chop
+   so the next segment grows or shrinks. Hold Alt to invert for one drag.
+   Double-click or right-click a point to remove it. **split every N** in
+   the transport strip bulk-places evenly spaced points (toggle **s** /
+   **f** for seconds or frames) - you can still add, remove, and drag
+   points afterward. Each segment row also has a frame-count stepper: type a
+   length or click the arrows (steps on the snap grid) instead of dragging
+   a handle on the waveform.
 3. Hit **Play** on a segment row to preview it (works before saving too -
    it's just the full track played between that segment's bounds).
 4. **Analysis** section - Analyze gives BPM and estimated musical key. This

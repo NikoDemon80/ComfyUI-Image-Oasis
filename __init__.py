@@ -13,6 +13,23 @@ import importlib.util
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
+
+def _load_file(filename, sys_name):
+    """Load a pack-root module under a stable sys.modules key."""
+    if sys_name in sys.modules:
+        return sys.modules[sys_name]
+    path = os.path.join(_THIS_DIR, filename)
+    spec = importlib.util.spec_from_file_location(sys_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[sys_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# CSRF helper must be importable as `oasis_csrf` before any route module
+# registers POST/DELETE handlers that write files.
+_load_file("oasis_csrf.py", "oasis_csrf")
+
 # Stable sys.modules keys (not the bare folder names) so a leftover
 # custom_nodes/video_oasis or custom_nodes/ltx23_oasis folder cannot shadow
 # these in-pack copies during import. Flat names (no dots) avoid needing a

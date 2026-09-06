@@ -185,9 +185,31 @@ function newRand() {
   return Math.random().toString(36).slice(2);
 }
 
-const FORMATS = ["auto", "mp4", "webm", "mkv"];
-const CODECS = ["auto", "h264", "hevc", "vp9", "av1"];
+const FORMATS = ["auto", "mp4", "webm", "mkv", "mov"];
+const CODECS = ["auto", "h264", "hevc", "vp9", "av1", "ffv1", "prores"];
 const QUALITIES = ["balanced", "high", "small", "custom"];
+const CODEC_HOME = {vp9:"webm", av1:"webm", ffv1:"mkv", prores:"mov"};
+const CONTAINER_CODECS = {
+  mp4:["h264","hevc","av1"], webm:["vp9","av1"],
+  mkv:["h264","hevc","vp9","av1","ffv1","prores"],
+  mov:["h264","hevc","prores"],
+};
+const LOSSLESS_CODECS = ["ffv1","prores"];
+const BROWSER_ODD_CODECS = ["hevc","ffv1","prores"];
+const snapEncodeCodec = (st, codec) => {
+  st.codec = codec;
+  const home = CODEC_HOME[codec];
+  if (!home) return;
+  const ok = st.format === "auto" || (CONTAINER_CODECS[st.format]||[]).includes(codec);
+  if (!ok || st.format === "auto") st.format = home;
+};
+const encodeHint = (codec) => {
+  if (codec === "ffv1")
+    return "FFV1 + FLAC in mkv: true lossless of the decoded frames. Will not play in-browser; the file on disk is fine. Save still copies, no re-encode.";
+  if (codec === "prores")
+    return "ProRes 422 HQ + PCM in mov: NLE-friendly, visually lossless, much bigger. Will not play in-browser; the file on disk is fine. Save still copies, no re-encode.";
+  return "webm takes VP9/AV1; mp4 takes h264/hevc/AV1; mkv takes anything including FFV1; mov takes ProRes. Save copies the preview losslessly \u2014 no re-encode.";
+};
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 const HISTORY_CAP = 48;
 
@@ -471,6 +493,7 @@ app.registerExtension({
               <div class="vo-toggle-grp">${CODECS.map((c) =>
                 `<button class="vo-tog${st.codec === c ? " active" : ""}" data-enc-codec="${c}">${c}</button>`).join("")}</div>
             </div>
+            ${LOSSLESS_CODECS.includes(st.codec) ? "" : `
             <div class="vo-row">
               <span class="vo-label">Quality</span>
               <div class="vo-toggle-grp">${QUALITIES.map((q) =>
@@ -479,8 +502,9 @@ app.registerExtension({
             ${st.quality === "custom"
               ? `<div class="vo-row"><span class="vo-label">CRF</span><input class="vo-input" type="number" data-f="crf" value="${esc(st.crf)}" step="1" min="0" max="63"/></div>`
               : ""}
+            `}
             <div class="vo-row"><span class="vo-label">Save prefix</span><input class="vo-input" data-f="save_prefix" value="${esc(st.save_prefix)}"/></div>
-            <div class="vo-mini" style="opacity:.7">webm takes VP9/AV1; mp4 takes h264/hevc; mkv takes anything. Save copies the preview losslessly \u2014 no re-encode.</div>
+            <div class="vo-mini" style="opacity:.7">${esc(encodeHint(st.codec))}</div>
           `;
         sectionsEl.innerHTML = `
           <div class="vo-sec-row">
@@ -514,7 +538,7 @@ app.registerExtension({
         sectionsEl.querySelectorAll("[data-enc-codec]").forEach((b) =>
           b.addEventListener("click", (e) => {
             e.stopPropagation();
-            st.codec = b.dataset.encCodec;
+            snapEncodeCodec(st, b.dataset.encCodec);
             renderSections();
           }));
         sectionsEl.querySelectorAll("[data-enc-quality]").forEach((b) =>
@@ -721,7 +745,7 @@ app.registerExtension({
           ` \u00b7 ${e.fps || "?"} fps \u00b7 ` +
           `${e.frames ?? "?"} frames \u00b7 ${fmtSize(e.size_bytes)}` +
           (e.has_audio ? " \u00b7 audio" : "") +
-          (e.codec === "hevc" ? "  (hevc may not play in-browser; the file itself is fine)" : "");
+          (BROWSER_ODD_CODECS.includes(e.codec) ? "  (" + e.codec + " may not play in-browser; the file itself is fine)" : "");
         infoText.classList.toggle("vo-warn", !!e.warning);
         infoText.title = e.warning || "";
         if (history.length > 1) {

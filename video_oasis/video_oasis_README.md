@@ -54,12 +54,13 @@ scene bar. Useful for keeping only the stretch you want before Create Movie.
 ## Create Movie
 
 **🎬 Create Movie** concatenates every **saved** clip in the scene bar (left to
-right) into `output/video/create_movie_NNNNN.mp4`.
+right) into `output/video/create_movie_NNNNN.{mp4|webm|mkv|mov}`, matching
+the clips' codec.
 
 - Clips should match resolution and FPS
 - Same bitstream params → video is **stream-copied** (lossless)
-- After Clip (or mixed encode settings) → movie is **re-encoded** so the join
-  stays clean
+- After Clip (or mixed extradata) → movie is **re-encoded in the same codec**
+- Mixed codecs follow the first clip
 - 🔊/🔇 toggle: with audio on, tracks are aligned (silence padded where needed);
   off = silent movie
 - Audio across each join is rebuilt, not blindly concatenated: clips are
@@ -79,14 +80,16 @@ the widget, not as separate Comfy widgets):
 
 | Control | Notes |
 |---------|--------|
-| **Format** | `auto`, `mp4`, `webm`, `mkv` (toggle group) |
-| **Codec** | `auto`, `h264`, `hevc`, `vp9`, `av1` (toggle group) |
-| **Quality** | `balanced` (default) / `high` / `small` / `custom` (exposes CRF) |
+| **Format** | `auto`, `mp4`, `webm`, `mkv`, `mov` (toggle group) |
+| **Codec** | `auto`, `h264`, `hevc`, `vp9`, `av1`, `ffv1`, `prores` (toggle group) |
+| **Quality** | `balanced` (default) / `high` / `small` / `custom` (exposes CRF). Hidden for FFV1 and ProRes. |
 | **Save prefix** | Path stem under `output/` (default `video/VideoOasis`) |
 
 `auto` everything matches stock Save Video's fast path when possible. webm
-accepts VP9/AV1; mp4 takes h264/hevc; mkv takes anything. HEVC may not play
-in-browser; the file on disk is fine.
+accepts VP9/AV1; mp4 takes h264/hevc/AV1; mkv takes anything including FFV1; mov
+takes ProRes 422 HQ. **FFV1 + FLAC** is true lossless of the decoded 8-bit RGB.
+**ProRes 422 HQ + PCM** is visually lossless and NLE-friendly. HEVC, FFV1 and
+ProRes may not play in-browser; the file on disk is fine.
 
 ## Theme
 

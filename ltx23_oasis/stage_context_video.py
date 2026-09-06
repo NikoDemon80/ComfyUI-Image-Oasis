@@ -2,14 +2,9 @@
 Motion context extraction for continue-from-viewed.
 
 The tail that seeds the next segment comes from whatever clip is sitting in
-the Video Oasis Viewer, not from an in-memory tensor left over from the last
-render. The frontend registers a /view-style entry descriptor; this module
-resolves it to a path and decodes the last N frames (and, for generated-audio
-continuity, the matching tail of the audio stream) with PyAV.
-
-The resolver is vendored rather than imported from routes_viewer: this runs
-inside generate(), and that module drags in aiohttp server plumbing that has
-no business sitting on the sampling path.
+the Video Oasis Viewer. Generate prefers a cached sampled latent for that
+entry (VAE-decoded to pixels, then pinned). Clips with no latent — loaded
+from disk, Clip, Create Movie — fall back to decoding the file with PyAV.
 """
 
 import os
@@ -167,6 +162,66 @@ def extract_tail(path, n_frames, want_audio=False):
     return images, audio, {"fps": fps,
                            "width": int(images.shape[2]),
                            "height": int(images.shape[1])}
+
+
+def extract_tail_from_latent(pair, n_frames, want_audio=False, vae=None,
+                             audio_vae=None):
+    """VAE-decode a cached sampled latent and return its delivered tail.
+
+    Same return shape as extract_tail. The decode is required: LTX's first
+    latent frame of a sequence is an anchor and the rest are deltas, so the
+    tail cannot be copied into a new clip's head as tensors. Decoding and
+    handing pixels to LTXVImgToVideoInplace is the proven pin; this just
+    skips the h264 file so a long chain does not soften.
+    """
+    from .comfy_bridge_video import first
+    from .stage_sample_video import _trim_audio_window
+
+    if vae is None or pair is None or pair.get("video") is None:
+        raise ValueError("Cached latent is missing its video stream.")
+
+    ctx = int(pair.get("ctx_latent_frames") or 0)
+    deliver = int(pair.get("deliver_frames") or 0)
+    q = int(pair.get("quantum") or 8)
+    fps = float(pair.get("fps") or 25.0)
+    ctx_span = context_span_px(ctx, q)
+
+    images = first("VAEDecode", samples={"samples": pair["video"]}, vae=vae)
+    if ctx_span or deliver:
+        end = (int(deliver) + ctx_span) if deliver else None
+        images = images[ctx_span:end] if end is not None else images[ctx_span:]
+    if int(images.shape[0]) < 1:
+        raise ValueError("Cached latent decoded to no delivered frames.")
+
+    n_frames = max(1, int(n_frames))
+    got = int(images.shape[0])
+    if got > n_frames:
+        images = images[-n_frames:]
+
+    audio = None
+    if want_audio and pair.get("audio") is not None and audio_vae is not None:
+        try:
+            decoded = first("LTXVAudioVAEDecode",
+                            samples={"samples": pair["audio"]},
+                            audio_vae=audio_vae)
+            if ctx_span or deliver:
+                decoded = _trim_audio_window(decoded, ctx_span,
+                                             deliver or got, fps)
+            wave = decoded.get("waveform") if isinstance(decoded, dict) else None
+            sr = int((decoded or {}).get("sample_rate") or 0) if isinstance(decoded, dict) else 0
+            if wave is not None and sr:
+                n_samples = int(round((float(int(images.shape[0])) / fps) * sr))
+                if n_samples and int(wave.shape[-1]) > n_samples:
+                    decoded = {"waveform": wave[..., -n_samples:].contiguous(),
+                               "sample_rate": sr}
+                audio = decoded
+        except Exception as e:
+            log.debug("[LTX Oasis] cached latent audio decode failed: %s", e)
+
+    return images, audio, {"fps": fps,
+                           "width": int(images.shape[2]),
+                           "height": int(images.shape[1]),
+                           "from_latent": True}
 
 
 def fit_context_images(images, width, height):

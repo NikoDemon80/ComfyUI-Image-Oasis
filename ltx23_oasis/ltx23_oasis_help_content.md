@@ -58,7 +58,7 @@ Windows are 8n+1 counts like every other LTX length. Anything else is snapped do
 
 A T2V run with Continue active silently becomes image-conditioned from the second run on. That's expected; it's how the chain works.
 
-Two things worth knowing: the tail is always read from the file in the viewer, so a clip loaded from disk behaves exactly like one you just rendered. And if the tail source runs at a different frame rate than your render, the motion reads at the wrong speed - the console warns when that happens.
+Two things worth knowing: generated clips pin from a **cached latent** (the sample, not the h264 file), so a long chain does not soften. Clips loaded from disk, Clip, and Create Movie have no latent and fall back to decoding the file in the viewer — that path still works. If the tail source runs at a different frame rate than your render, the motion reads at the wrong speed - the console warns when that happens.
 
 ## Reference images
 
@@ -85,8 +85,7 @@ Tips: 2-3 beats for a 5-second clip is plenty; beats describe *actions*, not new
 
 - **Width / Height**: LTX wants multiples of 32; the ratio locks, ↔ swap, and ⤢ use-size all snap accordingly. Sweet spot with a reference image: render at **half the source image's resolution** (e.g. 1536×1536 source → 768×768 video), a clean 2:1 supersample.
 - **Frames**: snaps to the LTX grid (8n+1: 97, 121, 145...). The ≈ seconds line updates live as you type.
-- **FPS**: playback rate of the encoded file. LTX's native rhythm is 25.
-- **Cond. FPS**: the frame rate stamped into the model's conditioning: how fast the model *thinks* time passes, independent of playback. 0 = follow FPS, which is right 95% of the time. The other 5%: conditioning 25 + encoding 12.5 = smooth slow motion; conditioning 25 now + RIFE-interpolating to 50 later keeps motion natural.
+- **FPS**: playback rate of the encoded file, and the rate stamped into the model's conditioning. LTX's native rhythm is 25 on 2.3 and 24 on 2.5. The two uses are deliberately locked together: telling the model a different amount of time passes than the clip actually spans desyncs the audio stream, which has no spare redundancy to absorb the error and simply fails to resolve into anything but noise. Earlier versions exposed a separate Cond. FPS field; it is gone, and any value saved in an old workflow is ignored.
 - **Audio**: three modes, all needing the Audio VAE under Model when not Off:
   - **Off**: silent video.
   - **Generate**: the model dreams the soundtrack from the prompt (describe the soundscape explicitly for best results).
@@ -100,11 +99,15 @@ The distilled LTX models sample on a fixed **sigma schedule** instead of a step 
 
 Seed handling is IO's: the ▶/🎲 pair by the seed field and on the header, plus the After-gen control (fixed / increment / decrement / randomize).
 
-## Upscale: Spatial Upsample (×2)
+**Attention** switches SageAttention on or off for the run. On is the default and is what you want almost always: it is a drop-in speed-up (via ComfyUI-KJNodes) with no visible quality cost, and it is skipped automatically with a console note if KJNodes isn't installed. Turn it Off when a render comes out wrong in a way the settings don't explain - static or noise instead of a soundtrack, garbled frames - to rule the accelerator out. Off is slower and changes nothing else. Flipping the toggle invalidates the sampled-latent cache, so the next run genuinely re-samples rather than handing back the previous result.
 
-Runs the LTX 2× latent upsampler after the main sample (2.5 runs the 2.3 upscaler, as its own reference workflow does). **Polish pass** additionally re-samples at the upscaled resolution: much sharper, but it runs the full diffusion model at 4× the tokens, so it's heavy (its re-noise sigma list is editable; ↺ resets it; fewer/lower values = subtler and faster). Off = upsample-only: fast, slightly softer. The sampled video is cached, so toggling Upscale re-runs only the upsample + decode, not the generation.
+## Upscale: RTX VSR and Spatial Upsample (×2)
 
-Off by default for two reasons: with a reference image active it can drift your subject's likeness, and the half-resolution-render + supersample route usually looks better anyway.
+**RTX Video Super Resolution** sits above Spatial Upsample. It is a pixel pass after decode (and after Spatial Upsample, if that is also on), using the `RTXVideoSuperResolution` node from Nvidia RTX Nodes (`comfyui_nvidia_rtx_nodes`). Needs an Nvidia RTX GPU. Off until you tick it; then Size (× Scale 1–4, or exact Width/Height) and Quality (LOW / MEDIUM / HIGH / ULTRA) appear. The sampled video is cached, so toggling VSR re-runs decode + VSR, not the generation.
+
+**Spatial Upsample** runs the LTX 2× latent upsampler after the main sample (2.5 runs the 2.3 upscaler, as its own reference workflow does). **Polish pass** additionally re-samples at the upscaled resolution: much sharper, but it runs the full diffusion model at 4× the tokens, so it's heavy (its re-noise sigma list is editable; ↺ resets it; fewer/lower values = subtler and faster). Off = upsample-only: fast, slightly softer. The sampled video is cached, so toggling Upscale re-runs only the upsample + decode, not the generation.
+
+Both off by default. With a reference image active, Spatial Upsample can drift your subject's likeness, and the half-resolution-render + supersample route usually looks better anyway.
 
 ## The player & scene bar
 
@@ -120,7 +123,7 @@ The **scene bar** keeps up to 48 renders, one click away, surviving tab switches
 
 ### 🎬 Create Movie
 
-Concatenates every **saved** clip in the scene bar (left to right) into one file at `output/video/create_movie_NNNNN.mp4`. Clips must match resolution and FPS. When every clip shares the same bitstream params, video is stream-copied (lossless). If any clip differs (common after Clip, which re-encodes), the movie is re-encoded so the join stays clean. The 🔊/🔇 toggle controls audio: on, audio is re-encoded to AAC and silent clips get silence so the timeline stays aligned; off, the movie is silent.
+Concatenates every **saved** clip in the scene bar (left to right) into one file at `output/video/create_movie_NNNNN.{mp4|webm|mkv|mov}` matching the clips' codec. Clips must match resolution and FPS. When every clip shares the same bitstream params, video is stream-copied (lossless). If any clip differs (common after Clip, which re-encodes), the movie is re-encoded in that same codec so the join stays clean. Mixed bars follow the first clip. The 🔊/🔇 toggle controls audio: on, audio is re-encoded to match the video codec (AAC / Opus / FLAC / PCM) and silent clips get silence so the timeline stays aligned; off, the movie is silent.
 
 Audio across the joins is rebuilt rather than blindly concatenated: each clip's track is trimmed to exactly the length its frame count calls for (removing the AAC tail padding that used to drop a short hole into continuous ambience, and stopping audio from walking late against picture down a long bar), and the samples either side of each cut are crossfaded so the splice cannot click. Details land in the ComfyUI console under `[LTXO Movie]`.
 
@@ -128,7 +131,7 @@ The finished movie is added to the scene bar as a saved entry, so you can play i
 
 ## Encode
 
-`auto` everything is a good default. webm accepts VP9/AV1 only; mp4 takes h264/hevc; mkv takes anything. Quality presets map to per-codec CRF values (codec scales differ, which is why presets rather than one raw number); `custom` exposes CRF directly. **Save prefix** sets where 💾 Save lands under `output/` and the filename stem (default `video/LTX23Oasis` → `output/video/LTX23Oasis_...`). Note hevc previews may not play in-browser; the file itself is fine.
+`auto` everything is a good default. webm accepts VP9/AV1; mp4 takes h264/hevc/AV1; mkv takes anything including FFV1; mov takes ProRes 422 HQ. Quality presets map to per-codec CRF values (codec scales differ, which is why presets rather than one raw number); `custom` exposes CRF directly. **FFV1** is true lossless (FLAC audio) and **ProRes** is visually lossless (PCM audio); both skip the quality row. They will not play in-browser; the file itself is fine. **Save prefix** sets where 💾 Save lands under `output/` and the filename stem (default `video/LTX23Oasis` → `output/video/LTX23Oasis_...`). HEVC previews may not play in-browser; the file itself is fine.
 
 ## Presets & Theme
 

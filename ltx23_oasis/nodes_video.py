@@ -12,8 +12,9 @@ Cache tiers:
     _WORK_CACHE  loras + attention patches applied
     _SAMPLED     per-io_id sampled latent (CPU) + conditioning, keyed by
                  everything upstream of Upscale/Encode — so toggling the
-                 upscaler or re-encoding does NOT reload or resample; only
-                 the upsample + decode + encode stages run.
+                 upscaler, RTX VSR, or re-encoding does NOT reload or
+                 resample; only the upsample + decode + VSR + encode stages
+                 run.
 """
 
 import json
@@ -36,9 +37,8 @@ _WORK_CACHE = {}    # key -> (models, clip)
 _SAMPLED = {}       # io_id -> {"key", "latent"(cpu), cond fields}
 _TAIL_SRC = {}      # io_id -> {"video","subfolder","type"}: the viewer entry
                     # that seeds continue-from-viewed. A reference, not
-                    # pixels — whatever is in the viewer IS the tail source,
-                    # including clips loaded from previous sessions, so the
-                    # frames get decoded off disk at generate time.
+                    # pixels. Generate prefers a cached sampled latent for
+                    # that entry and falls back to decoding the file.
 _TAIL_VER = {}      # io_id -> int; bumps when the tail source changes, so the
                     # sampled-latent key sees continue-last input changes
 
@@ -107,12 +107,10 @@ def _adapt_flat_state(st):
         st.get("relay_segments") or [], st.get("frames", 0))
 
     gen = {k: st[k] for k in ("width", "height", "frames", "fps", "seed",
-                              "cfg", "sigmas", "conditioning_fps")
+                              "cfg", "sigmas")
            if k in st}
     if "sampler_name" in st:
         gen["sampler"] = st["sampler_name"]
-    if not gen.get("conditioning_fps"):
-        gen.pop("conditioning_fps", None)   # 0 = follow fps
 
     return {
         "arch": st.get("architecture", "ltx23"),
@@ -123,6 +121,9 @@ def _adapt_flat_state(st):
         "vae_files": {"video": st.get("vae_file", ""),
                       "audio": st.get("vae_audio_file", "")},
         "weight_dtype": st.get("weight_dtype", "default"),
+        # Generation > Attention. True (default) keeps the registry's
+        # attention_patches; False runs the model unpatched.
+        "sage": st.get("sage", True) is not False,
         "loras": loras,
         # audio_mode: "off" | "generate" | "file" (file = audio-driven video)
         "audio": st.get("audio_mode", "off") != "off",
@@ -146,7 +147,16 @@ def _adapt_flat_state(st):
                     "polish": bool(st.get("upscale_polish")),
                     "sigmas": st.get("upscale_sigmas", ""),
                     "cfg": st.get("upscale_cfg", 1.0),
-                    "sampler": st.get("upscale_sampler", "euler")},
+                    "sampler": st.get("upscale_sampler", "euler"),
+                    "vsr": {
+                        "enabled": bool(st.get("enable_vsr")),
+                        "resize_type": st.get("vsr_resize_type",
+                                             "scale by multiplier"),
+                        "scale": st.get("vsr_scale", 2.0),
+                        "width": st.get("vsr_width", 1920),
+                        "height": st.get("vsr_height", 1080),
+                        "quality": st.get("vsr_quality", "ULTRA"),
+                    }},
         "encode": {"format": st.get("format", "auto"),
                    "codec": st.get("codec", "auto"),
                    "quality": st.get("quality", "balanced"),
@@ -168,48 +178,58 @@ def _snap_context_px(px, quantum):
     return ((px - 1) // quantum) * quantum + 1
 
 
-def _load_tail(spec, io_id, gen, refs_cfg, audio_enabled, audio_file):
-    """Decode the tail of whatever clip the viewer is currently showing.
+def _load_tail(spec, io_id, gen, refs_cfg, audio_enabled, audio_file, loaded):
+    """Load the tail of whatever clip the viewer is currently showing.
 
-    Returns (images, ctx_latent_frames, ctx_audio). ctx_latent_frames is 0
-    for the classic single-frame tail, in which case nothing about the
-    timeline length changes and this behaves exactly as it always has.
-
-    A window of N latent frames is N*quantum pixel frames of real motion
-    pinned in front of the delivered timeline: enough for the model to read
-    direction and speed out of the previous segment instead of guessing them
-    from a single still.
+    Prefers a cached sampled latent (VAE-decoded to pixels, then pinned the
+    same way as always). Falls back to decoding the viewer file when that
+    clip was never sampled here — load-from-disk, Clip, Create Movie, or a
+    cache miss. Missing file AND missing latent is the only hard fail.
     """
+    from . import latent_cache as lcache
+
     src = _TAIL_SRC.get(io_id) or {}
     path = sctx.resolve_entry_path(src.get("video"), src.get("subfolder"),
                                    src.get("type"))
-    if not path:
-        raise ValueError(
-            "[LTX Oasis] The clip seeding continue-from-viewed is not on "
-            "disk any more. Pick another entry in the scene bar.")
+    entry_id = lcache.entry_id_for(src.get("video"), src.get("subfolder"),
+                                   src.get("type"))
 
     q = int(spec["frame_quantum"])
-    # context_frames is the ENCODED window in pixel frames and is itself an
-    # 8n+1 count, because the first latent frame of any sequence decodes to a
-    # single pixel frame and every later one to `q`. 17 real frames is 3
-    # latent frames, not 24.
     want_px = _snap_context_px(max(0, int(refs_cfg.get("context_frames", 0) or 0)), q)
     ctx_latent = ((want_px - 1) // q + 1) if want_px else 0
     n_frames = want_px if ctx_latent else 1
 
-    # The tail waveform is only wanted when audio is actually being
-    # GENERATED: on a driven run the uploaded track is authoritative and the
-    # context window gets silence instead.
     want_audio = bool(ctx_latent and audio_enabled
                       and not (audio_file or "").strip())
 
-    images, ctx_audio, info = sctx.extract_tail(path, n_frames, want_audio)
+    images, ctx_audio, info = None, None, {}
+    pair = lcache.fetch(entry_id) if entry_id else None
+    if pair is not None:
+        try:
+            images, ctx_audio, info = sctx.extract_tail_from_latent(
+                pair, n_frames, want_audio,
+                vae=loaded.get("vae"),
+                audio_vae=loaded.get("audio_vae"))
+            log.info("[LTX Oasis] Motion context from cached latent for %s.",
+                     entry_id)
+        except Exception as e:
+            log.warning("[LTX Oasis] Cached latent for %s unusable (%s) — "
+                        "falling back to the viewer file.", entry_id, e)
+            images, ctx_audio, info = None, None, {}
+
+    if images is None:
+        if not path:
+            raise ValueError(
+                "[LTX Oasis] The clip seeding continue-from-viewed has no "
+                "cached latent and is not on disk any more. Pick another "
+                "entry in the scene bar.")
+        images, ctx_audio, info = sctx.extract_tail(path, n_frames, want_audio)
+        log.info("[LTX Oasis] Motion context from viewer file (no latent).")
 
     got = int(images.shape[0])
     if not ctx_latent:
         images = images[-1:]
     elif got < n_frames:
-        # Short source clip: fall back to the largest legal window that fits.
         want_px = _snap_context_px(got, q)
         ctx_latent = ((want_px - 1) // q + 1) if want_px else 0
         images = images[-want_px:] if ctx_latent else images[-1:]
@@ -225,9 +245,6 @@ def _load_tail(spec, io_id, gen, refs_cfg, audio_enabled, audio_file):
             "%.3f fps — the motion context will read as %.0f%% speed.",
             src_fps, tgt_fps, (src_fps / tgt_fps) * 100.0)
 
-    # The viewer entry can be any resolution (an earlier session, a different
-    # aspect, an upscaled render); the frozen region has to match the target
-    # latent's spatial shape.
     images = sctx.fit_context_images(images, int(gen["width"]),
                                      int(gen["height"]))
     if ctx_audio is not None and not ctx_latent:
@@ -254,8 +271,8 @@ class LTX23Oasis:
     CATEGORY = "video"
     DESCRIPTION = ("All-in-one LTX 2.3 / 2.5 video generation — model loading, "
                    "LoRAs, Start Frame, Prompt Beats (PromptRelay + "
-                   "keyframe guides), audio, generation, optional spatial "
-                   "upscale, and the in-node player.")
+                   "keyframe guides), audio, generation, optional RTX VSR "
+                   "and spatial upscale, and the in-node player.")
     SEARCH_ALIASES = ["ltx2.3 oasis", "ltx oasis", "ltx23", "generate video", "ltx"]
 
     @classmethod
@@ -289,6 +306,12 @@ class LTX23Oasis:
             gen["sigmas"] = spec["sampling"].get("sigmas", "")
         gen["frames"] = rv.snap_frames(spec, gen.get("frames",
                                                      spec["defaults"]["frames"]))
+        # LTXVConditioning is stamped with the working FPS, always. A rate
+        # that disagrees with the delivered frame rate desyncs the audio
+        # stream's clock and it never converges - the audio latent has no
+        # spatial redundancy to absorb the error the way video does.
+        log.info("[LTX Oasis] %s frames at %s fps; conditioning stamped at "
+                 "the same rate.", gen["frames"], gen.get("fps"))
         audio_enabled = bool(ex.get("audio")) and bool(spec.get("audio"))
         audio_file = (ex.get("audio_file") or "").strip()
         up = dict(ex.get("upscale") or {})
@@ -302,11 +325,20 @@ class LTX23Oasis:
             mode = "i2v"
             spec = rv.validate_combo(arch, source, mode)
 
+        # ── Attention patches: registry default, switchable off from the UI.
+        #    Both caches below key on the RESOLVED tuple, so flipping the
+        #    toggle re-patches and re-samples instead of handing back the
+        #    previous render.
+        patches = (tuple(spec["attention_patches"])
+                   if ex.get("sage", True) else ())
+        if spec["attention_patches"] and not patches:
+            log.info("[LTX Oasis] Attention set to Off — running unpatched.")
+
         # ── Sampled-latent cache check: everything UPSTREAM of Upscale ──
         sample_key = _key("sampled", arch, mode, source,
                           ex.get("model_files"), ex.get("clip_files"),
                           ex.get("vae_files"), ex.get("weight_dtype"),
-                          ex.get("loras"), spec["attention_patches"],
+                          ex.get("loras"), patches,
                           ex.get("prompt"), ex.get("negative"),
                           ex.get("relay"), refs_cfg, gen, audio_enabled,
                           audio_file,
@@ -337,20 +369,19 @@ class LTX23Oasis:
 
         # ── Tier 2: loras + attention patches ──
         loras = list(ex.get("loras") or [])
-        wk = _key("work", rk, loras, spec["attention_patches"])
+        wk = _key("work", rk, loras, patches)
         if wk not in _WORK_CACHE:
             _WORK_CACHE.clear()
             models, clip = load.apply_lora_stack_multi(
                 loaded["models"], loaded["clip"], loras)
-            models = {slot: load.apply_attention_patches(
-                          m, spec["attention_patches"])
+            models = {slot: load.apply_attention_patches(m, patches)
                       for slot, m in models.items()}
             _WORK_CACHE[wk] = (models, clip)
         models, clip = _WORK_CACHE[wk]
 
         if reuse:
             log.info("[LTX Oasis] Reusing sampled latent for %s — running "
-                     "upscale/decode/encode only.", io_id or "(no id)")
+                     "upscale/decode/VSR/encode only.", io_id or "(no id)")
             cond = {"positive": cached["positive"],
                     "negative": cached["negative"],
                     "used_guides_or_inplace": cached["used_guides_or_inplace"],
@@ -369,7 +400,8 @@ class LTX23Oasis:
             ctx_latent_frames, ctx_audio = 0, None
             if refs_cfg.get("continue_last") and io_id in _TAIL_SRC:
                 refs["start"], ctx_latent_frames, ctx_audio = _load_tail(
-                    spec, io_id, gen, refs_cfg, audio_enabled, audio_file)
+                    spec, io_id, gen, refs_cfg, audio_enabled, audio_file,
+                    loaded)
             elif refs_cfg.get("start_image"):
                 refs["start"] = scond.load_ref_image(refs_cfg["start_image"])
             ctx_px = sctx.context_span_px(ctx_latent_frames,
@@ -450,10 +482,13 @@ class LTX23Oasis:
                     "video_latent_frames": cond.get("video_latent_frames"),
                     "ctx_latent_frames": cond.get("ctx_latent_frames", 0)}
 
-        # ── Crop -> AV split -> optional upscale (+polish) -> decode ─────
-        images, audio = ssamp.finish_pipeline(
+        # ── Crop -> AV split -> optional upscale (+polish) -> decode -> VSR ─
+        images, audio, cache_pair = ssamp.finish_pipeline(
             spec, models, cond, latent, loaded, gen, up, audio_enabled,
             audio_file=audio_file)
+        if io_id and cache_pair:
+            from . import latent_cache as lcache
+            lcache.set_pending(io_id, cache_pair)
 
         video = ssamp.to_video(images, gen.get("fps", spec["fps_default"]), audio)
 

@@ -43,6 +43,7 @@ import logging
 import folder_paths
 from server import PromptServer
 from aiohttp import web
+from oasis_csrf import require_same_origin
 
 from . import dsp_audio as dsp
 
@@ -234,6 +235,7 @@ async def audio_oasis_get_theme(request):
 
 
 @routes.post("/audio_oasis/theme")
+@require_same_origin
 async def audio_oasis_save_theme(request):
     try:
         data = await request.json()
@@ -260,6 +262,7 @@ async def audio_oasis_get_named_themes(request):
 
 
 @routes.post("/audio_oasis/save_named_theme")
+@require_same_origin
 async def audio_oasis_save_named_theme(request):
     try:
         data = await request.json()
@@ -288,6 +291,7 @@ async def audio_oasis_save_named_theme(request):
 
 
 @routes.delete("/audio_oasis/themes/{theme_id}")
+@require_same_origin
 async def audio_oasis_delete_named_theme(request):
     tid = request.match_info["theme_id"]
     _save_named_themes([t for t in _load_named_themes() if t.get("id") != tid])
@@ -297,6 +301,7 @@ async def audio_oasis_delete_named_theme(request):
 # ── Analysis ─────────────────────────────────────────────────────────────
 
 @routes.post("/audio_oasis/analyze")
+@require_same_origin
 async def audio_oasis_analyze(request):
     try:
         data = await request.json()
@@ -327,6 +332,7 @@ async def audio_oasis_analyze(request):
 # ── Segment saving ───────────────────────────────────────────────────────
 
 @routes.post("/audio_oasis/save_segments")
+@require_same_origin
 async def audio_oasis_save_segments(request):
     try:
         data = await request.json()
@@ -342,6 +348,10 @@ async def audio_oasis_save_segments(request):
             fps = None
     except (TypeError, ValueError):
         fps = None
+
+    snap = data.get("snap")
+    if snap not in ("off", "frame", "8n1", "17k5"):
+        snap = None
 
     if not filename:
         return web.json_response({"error": "Missing filename."}, status=400)
@@ -418,6 +428,7 @@ async def audio_oasis_save_segments(request):
                     "end_frame": end_f,
                     "frames": frames,
                     "ltx_8n1": frames > 0 and frames % 8 == 1,
+                    "h3_17k5": frames >= 5 and (frames - 5) % 17 == 0,
                 })
             segments.append(entry)
 
@@ -425,6 +436,7 @@ async def audio_oasis_save_segments(request):
             "track_name": track_name,
             "source_filename": filename,
             "fps": fps,
+            "snap": snap,
             "saved_at": time.time(),
             "segments": segments,
         }

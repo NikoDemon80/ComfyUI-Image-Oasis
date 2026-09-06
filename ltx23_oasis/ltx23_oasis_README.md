@@ -32,6 +32,7 @@ In-node Help is the same text as [`ltx23_oasis_help_content.md`](ltx23_oasis_hel
 | Default fps | 25 | 24 |
 | Default size | 1280x720x121 | 960x544x121 |
 | Spatial Upsample | own x2 upscaler | borrows the 2.3 upscaler |
+| RTX VSR | pixel pass after decode (Nvidia RTX Nodes) | same |
 
 The **single text encoder on 2.5 is required, not a shortcut**: its file
 already contains the projection, so handing it to a two-slot loader builds a
@@ -51,6 +52,7 @@ you pick, so existing workflows load unchanged.
 | Required | This Oasis Suite pack (includes Video Oasis Viewer encode/player) |
 | Optional | `ComfyUI-GGUF` for GGUF diffusion |
 | Optional | `ComfyUI-KJNodes` for LTX2 NAG when CFG is 1 and a negative is set |
+| Optional | `comfyui_nvidia_rtx_nodes` for RTX Video Super Resolution in Upscale |
 | Optional | `llama-cpp-python` (CUDA/Metal) for the GGUF prompt enhancer - same as Image Oasis |
 
 Presets and theme: `ComfyUI/user/ltx23_oasis/`. HTTP API: `/ltx23_oasis/*`
@@ -102,9 +104,10 @@ window with silence so your track still starts on delivered frame 1 and is
 muxed exactly as supplied; Generate mode freezes the previous clip's tail audio
 so ambient and music carry across the cut.
 
-The tail is read from the file in the viewer, so loaded-from-disk clips behave
-exactly like fresh renders. Mismatched source fps is warned about in the
-console (the motion reads at the wrong speed).
+The tail source is whatever is in the viewer. Generated clips pin from a
+cached latent (no h264 round-trip). Clips loaded from disk, Clip, and Create
+Movie fall back to decoding the file. Mismatched source fps is warned about in
+the console (the motion reads at the wrong speed).
 
 ## Reference images
 
@@ -131,9 +134,11 @@ sampling and never appear literally in the output.
 - **Width / Height**: multiples of 32; ratio lock, ↔ swap, ⤢ use-size snap.
   Sweet spot with a reference: render at **half** the source resolution.
 - **Frames**: LTX grid (8n+1). ≈ seconds updates live.
-- **FPS**: playback rate of the encoded file (native rhythm is 25 on 2.3, 24
-  on 2.5).
-- **Cond. FPS**: how fast the model *thinks* time passes; `0` = follow FPS.
+- **FPS**: playback rate of the encoded file, and the rate stamped into the
+  model's conditioning (native rhythm is 25 on 2.3, 24 on 2.5). The two are
+  locked together on purpose - a conditioning rate that disagrees with the
+  delivered frame rate desyncs the audio stream and it never resolves. The
+  old Cond. FPS field is removed; stale values in saved workflows are ignored.
 - **Audio** (needs Audio VAE when not Off):
   - **Off** - silent
   - **Generate** - soundtrack from the prompt
@@ -151,12 +156,22 @@ steps), the same list on 2.3 and 2.5. ↺ restores the arch default. CFG stays a
 Seed: ▶/🎲 by the seed field and header, plus After-gen
 (fixed / increment / decrement / randomize).
 
-## Upscale: Spatial Upsample (×2)
+**Attention**: Sage / Off. Sage (default) applies the KJNodes SageAttention
+patch for speed, and is skipped with a console note if KJNodes isn't installed.
+Off runs the model unpatched - slower, useful for ruling the accelerator out
+when output looks wrong. Toggling it invalidates the sampled-latent cache.
 
-LTX 2× latent upsampler after the main sample. **Polish pass** re-samples at
-the upscaled resolution (heavy). Sampled video is cached - toggling Upscale
-re-runs only upsample + decode. Off by default (likeness drift with refs; half-res
-+ supersample often looks better).
+## Upscale: RTX VSR and Spatial Upsample (×2)
+
+**RTX Video Super Resolution** (toggle above Spatial Upsample) is a pixel
+pass after decode, via Nvidia RTX Nodes (`RTXVideoSuperResolution`). Tick it
+to expose Size (× Scale or target W×H) and Quality. Needs an RTX GPU. Sampled
+video is cached - toggling VSR does not resample.
+
+**Spatial Upsample** is the LTX 2× latent upsampler after the main sample.
+**Polish pass** re-samples at the upscaled resolution (heavy). Sampled video
+is cached - toggling Upscale re-runs only upsample + decode. Off by default
+(likeness drift with refs; half-res + supersample often looks better).
 
 ## Player & scene bar
 
@@ -173,8 +188,9 @@ Same toolkit as [Video Oasis Viewer](../video_oasis/video_oasis_README.md):
 ### 🎬 Create Movie
 
 Concatenates every **saved** scene-bar clip into
-`output/video/create_movie_NNNNN.mp4`. Stream-copy when params match;
-re-encode when needed (common after Clip). Audio toggle pads silence so the
+`output/video/create_movie_NNNNN.{mp4|webm|mkv|mov}`, matching the clips'
+codec. Stream-copy when params match; re-encode in that same codec when
+needed (common after Clip). Mixed bars follow the first clip. Audio toggle pads silence so the
 timeline stays aligned. Audio across each join is rebuilt rather than blindly
 concatenated: every clip is trimmed to exactly the length its own frame count
 calls for (no AAC tail padding leaking in as a gap, no drift down a long bar)
@@ -187,9 +203,12 @@ than the bar holds.
 
 ## Encode
 
-`auto` defaults are fine. webm → VP9/AV1; mp4 → h264/hevc; mkv → anything.
-Quality presets map to per-codec CRF; `custom` exposes CRF. **Save prefix**
-defaults to `video/LTX23Oasis`. HEVC may not preview in-browser.
+`auto` defaults are fine. webm → VP9/AV1; mp4 → h264/hevc/AV1; mkv → anything
+including **FFV1**; mov → **ProRes 422 HQ**. Quality presets map to per-codec
+CRF; `custom` exposes CRF. FFV1 and ProRes hide quality (no CRF): FFV1 + FLAC
+is true lossless of the decoded 8-bit RGB; ProRes is visually lossless and
+NLE-friendly. Neither will preview in-browser; the file on disk is fine.
+**Save prefix** defaults to `video/LTX23Oasis`.
 
 ## Presets & Theme
 

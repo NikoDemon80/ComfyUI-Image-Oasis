@@ -17,6 +17,51 @@ Frontends live in `web/` (`image_oasis.js`, `video_oasis.js`, `ltx23_oasis.js`,
 
 ---
 
+## What's new in 1.8
+
+1.6.0 and 1.7.0 stay banned on the registry; this is the version Manager can
+treat as Latest after publish. Class ids are unchanged.
+
+### CSRF gate (whole pack)
+
+Mutating POST/DELETE routes (presets, themes, save, save_segments, clip,
+create movie, enhance) now require the request Origin to match Host. Same-origin
+UI fetch already sends it; a cross-site form POST is rejected.
+
+### Continue from cached latent (LTX Oasis)
+
+**Continue from viewed video** prefers a cached sampled latent for the clip in
+the scene bar, the same idea as H3 Oasis. Generated clips no longer round-trip
+through h264 for the motion-context tail. Clips loaded from disk, Clip, and
+Create Movie have no latent and still decode the viewer file.
+
+### RTX Video Super Resolution (LTX Oasis)
+
+Upscale gains **RTX Video Super Resolution**, a toggle above Spatial Upsample.
+Tick it for Size (× Scale or target W×H) and Quality. It runs
+`RTXVideoSuperResolution` from Nvidia RTX Nodes on the decoded frames. Spatial
+Upsample still runs in latent first if both are on. Toggling VSR reuses the
+sampled latent. Needs an Nvidia RTX GPU and that custom node installed.
+
+### AV1 in mp4 (Video Oasis Viewer and LTX Oasis)
+
+AV1 is allowed in mp4 as well as webm (AOMedia ISOBMFF). Auto+AV1 still homes
+to webm. Create Movie keeps an AV1 mp4 bar in mp4 instead of remuxing it to
+webm.
+
+### Audio Oasis chops
+
+- **Snap: 17k+5 (H3)** next to 8n+1 (LTX), shortest useful segment 22 frames
+- Dragging a chop defaults to **shift later**; **stretch** is the one-handle
+  resize. Alt inverts for one drag
+- **split every** can step in seconds or in frames
+- Each segment row has a **frame-count stepper** (type a length or click the
+  arrows) so you do not have to drag a handle on the waveform
+- Until you save, the whole track is already the AUDIO output. Segment
+  highlight needs a saved file
+
+---
+
 ## What's new in 1.7
 
 ### LTX 2.5 (LTX Oasis)
@@ -193,7 +238,8 @@ build for the GGUF prompt enhancer - see
 [image_oasis/image_oasis_README.md](image_oasis/image_oasis_README.md).
 
 **Optional (LTX):** `ComfyUI-GGUF` for GGUF diffusion; `ComfyUI-KJNodes` for
-LTX2 NAG when CFG is 1 and a negative prompt is set.
+LTX2 NAG when CFG is 1 and a negative prompt is set; **Nvidia RTX Nodes**
+(`comfyui_nvidia_rtx_nodes`) for RTX Video Super Resolution in Upscale.
 
 **Optional (Audio Oasis):** `librosa` for BPM/key Analyze - listed commented-out
 in `requirements.txt` because it pulls in numba/llvmlite. Chop / save / drag all
