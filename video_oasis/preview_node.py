@@ -23,6 +23,11 @@ import folder_paths
 from comfy.cli_args import args
 from oasis_csrf import require_same_origin
 
+try:
+    import oasis_nvenc          # shared GPU encode helper (pack root)
+except Exception:               # missing helper just means CPU encoders only
+    oasis_nvenc = None
+
 log = logging.getLogger("VideoOasis")
 
 
@@ -155,9 +160,13 @@ def _audio_plan(container_fmt, codec, src_rate, layout):
     return "aac", src_rate, "fltp"
 
 
-def _encode_with_pyav(video, path, container_fmt, codec, crf, metadata):
+def _encode_with_pyav(video, path, container_fmt, codec, crf, metadata, nvenc=None):
     """Custom encode path: real CRF control + audio muxing, mirroring
-    core's VideoFromComponents.save_to but with more codecs."""
+    core's VideoFromComponents.save_to but with more codecs.
+
+    nvenc: (encoder_name, options, cq) from oasis_nvenc.plan() to encode on
+    the GPU, or None for the CPU encoder. Any NVENC error propagates so the
+    caller can retry on the CPU."""
     components = video.get_components()
     images = components.images                      # [N, H, W, C] float 0..1
     frame_rate = components.frame_rate
@@ -174,11 +183,22 @@ def _encode_with_pyav(video, path, container_fmt, codec, crf, metadata):
 
         rate = Fraction(round(float(frame_rate) * 1000), 1000)
 
-        vstream = output.add_stream(ENCODER_MAP[codec], rate=rate)
+        encoder = nvenc[0] if nvenc is not None else ENCODER_MAP[codec]
+        vstream = output.add_stream(encoder, rate=rate)
         vstream.width = images.shape[2]
         vstream.height = images.shape[1]
         vstream.pix_fmt = pix_fmt
-        _apply_video_options(vstream, codec, crf)
+        if nvenc is not None:
+            oasis_nvenc.apply(vstream, nvenc[1])
+        else:
+            _apply_video_options(vstream, codec, crf)
+        if codec == "hevc" and container_fmt in ("mp4", "mov"):
+            # FFmpeg tags hevc-in-mp4 as "hev1" by default; browsers and
+            # Apple players expect "hvc1". Same bitstream, friendlier label.
+            try:
+                vstream.codec_context.codec_tag = "hvc1"
+            except Exception:
+                pass
 
         # Audio stream must be declared before packets are written.
         astream = None
@@ -348,9 +368,35 @@ class VideoOasisPreview:
         except (TypeError, ValueError):
             crf = 20
         save_prefix = str(ex.get("save_prefix", "video/VideoOasis")) or "video/VideoOasis"
+        # GPU encode defaults on; it only applies when NVENC actually works.
+        gpu_encode = ex.get("gpu_encode", True) is not False
 
         container_fmt, chosen_codec, chosen_crf, use_stock = _resolve_encode_plan(
             format, codec, quality, crf)
+
+        # NVENC plan. codec "auto" into mp4 normally goes through core's stock
+        # save (CPU h264); with GPU encode on, generated frames go to
+        # h264_nvenc instead. A VideoFromFile stays on the stock path, which
+        # copies the source without re-encoding at all.
+        nv = None
+        if gpu_encode and oasis_nvenc is not None:
+            target = None
+            if not use_stock:
+                target = chosen_codec
+            elif type(video).__name__ != "VideoFromFile":
+                target = "h264"
+            if target:
+                try:
+                    nv = oasis_nvenc.plan(target, quality, crf)
+                except Exception:
+                    log.exception("VideoOasis: NVENC check failed, using CPU")
+                    nv = None
+            if nv is not None and use_stock:
+                use_stock = False
+                chosen_codec = "h264"
+                # CPU numbers kept ready in case NVENC fails mid-encode.
+                chosen_crf = (int(crf) if quality == "custom"
+                              else QUALITY_CRF["h264"].get(quality, QUALITY_CRF["h264"]["balanced"]))
 
         width, height = video.get_dimensions()
         # Temp basename = leaf of save_prefix (e.g. video/LTX23Oasis → LTX23Oasis)
@@ -363,6 +409,8 @@ class VideoOasisPreview:
         path = os.path.join(full_folder, file)
         metadata = _build_metadata(prompt, extra_pnginfo)
         warning = None
+        encoder_used = "cpu"
+        gpu_note = None
 
         if use_stock:
             try:
@@ -372,9 +420,29 @@ class VideoOasisPreview:
                 chosen_codec, chosen_crf = "h264", QUALITY_CRF["h264"]["balanced"]
                 warning = _encode_with_pyav(video, path, container_fmt,
                                             chosen_codec, chosen_crf, metadata)
+        elif nv is not None:
+            try:
+                warning = _encode_with_pyav(video, path, container_fmt,
+                                            chosen_codec, chosen_crf, metadata, nvenc=nv)
+                encoder_used = "nvenc"
+            except Exception as e:
+                log.warning("VideoOasis: GPU encode failed (%r), re-encoding on CPU", e)
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
+                gpu_note = "GPU encode failed, so this one was encoded on the CPU instead."
+                warning = _encode_with_pyav(video, path, container_fmt,
+                                            chosen_codec, chosen_crf, metadata)
         else:
             warning = _encode_with_pyav(video, path, container_fmt,
                                         chosen_codec, chosen_crf, metadata)
+        if gpu_note:
+            warning = f"{warning} {gpu_note}" if warning else gpu_note
+        log.info("VideoOasis: encoded %s with %s -> %s",
+                 chosen_codec if not use_stock else "auto (stock h264)",
+                 "GPU (nvenc)" if encoder_used == "nvenc" else "CPU", file)
 
         info = _probe(path)
         info.update({
@@ -383,7 +451,9 @@ class VideoOasisPreview:
             "type": "temp",
             "format": container_fmt,
             "codec": chosen_codec,
-            "crf": chosen_crf,
+            # For NVENC this is the cq value actually used (same scale idea).
+            "crf": nv[2] if encoder_used == "nvenc" else chosen_crf,
+            "encoder": encoder_used,
             "save_prefix": save_prefix,
         })
         if warning:

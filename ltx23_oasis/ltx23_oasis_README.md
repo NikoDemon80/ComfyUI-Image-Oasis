@@ -207,8 +207,32 @@ than the bar holds.
 including **FFV1**; mov → **ProRes 422 HQ**. Quality presets map to per-codec
 CRF; `custom` exposes CRF. FFV1 and ProRes hide quality (no CRF): FFV1 + FLAC
 is true lossless of the decoded 8-bit RGB; ProRes is visually lossless and
-NLE-friendly. Neither will preview in-browser; the file on disk is fine.
+NLE-friendly. The viewer plays them through a preview copy (below).
 **Save prefix** defaults to `video/LTX23Oasis`.
+
+**Browser preview copies.** FFV1 and ProRes never play in a browser, and
+hevc only plays in some browsers. When the viewer can't play a file it shows
+"Preparing browser preview" and builds a small h264 copy at the same size,
+fps and frame count (GPU-encoded when GPU Encode is on), then plays that. The
+info bar reads "preview copy" while it's in use. Save, Clip, frame drag and the
+LTX motion-context tail always use the real file. Copies live in
+`temp/oasis_proxy`, are built once per file, and clear when ComfyUI restarts.
+Scene-bar thumbnails for these files come from a server-side frame grab.
+hevc files in mp4/mov are now tagged `hvc1`, the label browsers and Apple
+players expect.
+
+**GPU Encode** (On / Off, default On) encodes on the NVIDIA GPU with NVENC.
+It only appears when NVENC actually works on your machine and the chosen codec
+has a GPU version: h264 and hevc on any RTX card, av1 on RTX 40-series and
+newer (vp9, FFV1 and ProRes are CPU only). With `auto`, GPU Encode writes
+h264. Quality presets map to NVENC's own quality scale (cq), and the scene
+bar badge reads `h264 nvenc cq 21` instead of `crf`. If the GPU encoder fails
+for any reason, that clip is re-encoded on the CPU and flagged with a warning.
+Clip and the Create Movie re-encode fallback follow this setting too, which
+keeps clips consistent so Create Movie can stream-copy more often (clips made
+with GPU Encode on and off have different headers and force a re-encode). The
+speedup is small on short clips; it pays off on long movies and VSR-upscaled
+output. NVENC files run a little larger than CPU files at the same quality.
 
 ## Presets & Theme
 

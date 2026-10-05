@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.9.0
+
+NVENC GPU encode, browser preview copies for FFV1 / ProRes / hevc, and a new
+Oasis Metadata node. Existing class ids unchanged: `ImageOasis`,
+`VideoOasisPreview`, `LTX23Oasis`, `AudioOasis`; new: `OasisMetadata`.
+
+### Pack / registry
+
+#### Added
+- **Oasis Metadata** (`OasisMetadata`): pick a saved PNG or video and read
+  the embedded prompt plus Oasis generation settings. Outputs two STRING
+  sockets (prompt, settings). Core Load Image / Load Video do not expose
+  those tags. Image and File are separate pickers; the image-upload widget
+  cannot take video.
+- Shared `oasis_nvenc.py` helper: detects NVENC once per session with a real
+  test encode, so a listed-but-broken encoder is never offered.
+
+---
+
+### Video Oasis Viewer and LTX Oasis
+
+#### Added
+- **GPU Encode** (On / Off, default On) encodes with NVIDIA NVENC. Shown only
+  when NVENC works and the codec has a GPU version: h264 and hevc on any RTX
+  card, av1 on RTX 40-series and newer. `auto` writes h264. Quality presets
+  map to NVENC cq; the scene bar badge reads `nvenc cq` instead of `crf`. A
+  failed GPU encode is redone on the CPU and flagged with a warning. Clip and
+  the Create Movie re-encode fallback follow the same setting.
+- **Browser preview copies.** FFV1, ProRes, and hevc where the browser can't
+  play it are shown through a small h264 copy at the same size, fps and frame
+  count. The info bar reads "preview copy". Save, Clip, frame drag and the
+  motion-context tail always use the real file. Copies live in
+  `temp/oasis_proxy` and clear on restart. Scene-bar thumbnails for these
+  files come from a server-side frame grab.
+
+#### Changed
+- hevc in mp4/mov is tagged `hvc1`, the label browsers and Apple players
+  expect.
+
+#### Fixed
+- Clip on a B-frame source dropped the last frames when the range ran to the
+  end of the file.
+- LTX Oasis no longer writes `ltxo_audio_diag.wav` to `output/` and logs
+  `[AUDIO-DIAG]` warnings on every audio decode (leftover diagnostic from
+  v1.8.0).
+
+---
+
 ## v1.8.0
 
 CSRF gate so Manager can treat this as Latest after 1.6/1.7 were banned,

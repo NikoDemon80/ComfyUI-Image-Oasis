@@ -2,7 +2,7 @@
 Oasis Suite — Image Oasis + Video Oasis Viewer + LTX2.3 Oasis + Audio Oasis.
 
 One ComfyUI custom-node pack. Subpackages keep stable node class ids:
-  ImageOasis, VideoOasisPreview, LTX23Oasis, AudioOasis
+  ImageOasis, VideoOasisPreview, LTX23Oasis, AudioOasis, OasisMetadata
 
 License: GPL-3.0-or-later (required by LTX Director vendored code in ltx23_oasis/).
 """
@@ -29,6 +29,9 @@ def _load_file(filename, sys_name):
 # CSRF helper must be importable as `oasis_csrf` before any route module
 # registers POST/DELETE handlers that write files.
 _load_file("oasis_csrf.py", "oasis_csrf")
+# Shared NVENC (GPU encode) detection, used by the Video Oasis Viewer and
+# LTX Oasis encode, clip and create-movie paths.
+_load_file("oasis_nvenc.py", "oasis_nvenc")
 
 # Stable sys.modules keys (not the bare folder names) so a leftover
 # custom_nodes/video_oasis or custom_nodes/ltx23_oasis folder cannot shadow
@@ -59,6 +62,7 @@ _image = _load_subpackage("image_oasis", "oasis_suite_image_oasis")
 _video = _load_subpackage("video_oasis", "oasis_suite_video_oasis")
 _ltx = _load_subpackage("ltx23_oasis", "oasis_suite_ltx23_oasis")
 _audio = _load_subpackage("audio_oasis", "oasis_suite_audio_oasis")
+_meta = _load_file("nodes_metadata.py", "oasis_suite_nodes_metadata")
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
@@ -66,10 +70,12 @@ NODE_CLASS_MAPPINGS.update(getattr(_image, "NODE_CLASS_MAPPINGS", {}) or {})
 NODE_CLASS_MAPPINGS.update(getattr(_video, "NODE_CLASS_MAPPINGS", {}) or {})
 NODE_CLASS_MAPPINGS.update(getattr(_ltx, "NODE_CLASS_MAPPINGS", {}) or {})
 NODE_CLASS_MAPPINGS.update(getattr(_audio, "NODE_CLASS_MAPPINGS", {}) or {})
+NODE_CLASS_MAPPINGS.update(getattr(_meta, "NODE_CLASS_MAPPINGS", {}) or {})
 NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_image, "NODE_DISPLAY_NAME_MAPPINGS", {}) or {})
 NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_video, "NODE_DISPLAY_NAME_MAPPINGS", {}) or {})
 NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_ltx, "NODE_DISPLAY_NAME_MAPPINGS", {}) or {})
 NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_audio, "NODE_DISPLAY_NAME_MAPPINGS", {}) or {})
+NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_meta, "NODE_DISPLAY_NAME_MAPPINGS", {}) or {})
 
 WEB_DIRECTORY = "./web"
 

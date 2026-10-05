@@ -66,65 +66,6 @@ def _trim_audio_window(audio, ctx_frames, deliver_frames, fps):
             "sample_rate": sr}
 
 
-def _audio_diag(video_latent, audio_latent, audio):
-    """TEMP DIAGNOSTIC - remove after the audio-noise hunt.
-
-    Reports the post-sample audio stream and dumps the raw VAE decode to a
-    WAV in ComfyUI's output folder, before trimming or muxing touches it."""
-    import logging
-    log = logging.getLogger("LTXOasis")
-    try:
-        import os
-        import torch
-        import folder_paths
-        vs = video_latent.get("samples")
-        as_ = audio_latent.get("samples")
-        log.warning("[AUDIO-DIAG] post-sample video %r | audio %r",
-                    tuple(vs.shape) if vs is not None else None,
-                    tuple(as_.shape) if as_ is not None else None)
-        if as_ is not None:
-            f = as_.float()
-            log.warning("[AUDIO-DIAG] audio latent stats min=%.4f max=%.4f "
-                        "mean=%.4f std=%.4f",
-                        float(f.min()), float(f.max()),
-                        float(f.mean()), float(f.std()))
-        if audio is None:
-            log.warning("[AUDIO-DIAG] decode returned None")
-            return
-        w = audio.get("waveform")
-        sr = int(audio.get("sample_rate") or 0)
-        log.warning("[AUDIO-DIAG] decoded waveform %r sample_rate=%r dtype=%r",
-                    tuple(w.shape) if w is not None else None, sr,
-                    str(w.dtype) if w is not None else None)
-        if w is None or not sr:
-            return
-        wf = w.float().cpu()
-        log.warning("[AUDIO-DIAG] waveform stats min=%.4f max=%.4f mean=%.4f "
-                    "std=%.4f | %.3f s at %d Hz",
-                    float(wf.min()), float(wf.max()),
-                    float(wf.mean()), float(wf.std()),
-                    wf.shape[-1] / float(sr), sr)
-        out_dir = folder_paths.get_output_directory()
-        path = os.path.join(out_dir, "ltxo_audio_diag.wav")
-        flat = wf[0] if wf.ndim == 3 else wf
-        if flat.ndim == 1:
-            flat = flat.unsqueeze(0)
-        peak = float(flat.abs().max())
-        if peak > 1.0:
-            flat = flat / peak
-        pcm = (flat.clamp(-1.0, 1.0) * 32767.0).to(torch.int16)
-        import wave as _wave
-        with _wave.open(path, "wb") as fh:
-            fh.setnchannels(int(pcm.shape[0]))
-            fh.setsampwidth(2)
-            fh.setframerate(sr)
-            fh.writeframes(pcm.t().contiguous().numpy().tobytes())
-        log.warning("[AUDIO-DIAG] raw decode written to %s (peak was %.4f)",
-                    path, peak)
-    except Exception as exc:
-        log.warning("[AUDIO-DIAG] probe failed: %r", exc)
-
-
 def _apply_rtx_vsr(images, vsr):
     """Pixel-space RTX Video Super Resolution on the delivered frames.
 
@@ -232,7 +173,6 @@ def finish_pipeline(spec, models, cond, latent, loaded, gen, up, audio_enabled,
         else:
             audio = first("LTXVAudioVAEDecode", samples=audio_latent,
                           audio_vae=loaded["audio_vae"])
-            _audio_diag(latent, audio_latent, audio)
             if ctx_span and audio is not None:
                 # Trim in SAMPLE space rather than cropping the audio latent:
                 # sr/fps is exact and needs no assumption about the audio

@@ -7,11 +7,17 @@ full preview toolkit. LTX may keep thin aliases until the repos are merged.
 
 import os
 import logging
+import threading
 
 import folder_paths
 from aiohttp import web
 from server import PromptServer
 from oasis_csrf import require_same_origin
+
+try:
+    import oasis_nvenc          # shared GPU encode helper (pack root)
+except Exception:               # missing helper just means CPU encoders only
+    oasis_nvenc = None
 
 log = logging.getLogger("VideoOasis")
 routes = PromptServer.instance.routes
@@ -62,6 +68,22 @@ def _walk_output_videos():
             })
     results.sort(key=lambda r: r["mtime"], reverse=True)
     return results[:_LIST_CAP]
+
+
+@routes.get("/video_oasis/nvenc")
+async def vo_nvenc(request):
+    """Which codecs NVENC can encode here. The frontend hides the GPU Encode
+    toggle when the list is empty. First call runs the one-time probe off
+    the event loop."""
+    codecs = []
+    if oasis_nvenc is not None:
+        try:
+            import asyncio
+            codecs = await asyncio.get_running_loop().run_in_executor(
+                None, oasis_nvenc.available_codecs)
+        except Exception:
+            codecs = []
+    return web.json_response({"available": bool(codecs), "codecs": codecs})
 
 
 @routes.get("/video_oasis/list_output_videos")
@@ -205,8 +227,26 @@ def _movie_container(codec, src_path=None):
     return _copy_container(codec) or "mkv"
 
 
-def _reencode_profile(codec):
+def _nvenc_supports(codec):
+    if oasis_nvenc is None:
+        return False
+    try:
+        return oasis_nvenc.supports(_canonical_codec(codec))
+    except Exception:
+        return False
+
+
+def _reencode_profile(codec, gpu=False):
     c = _canonical_codec(codec)
+    if gpu and oasis_nvenc is not None:
+        # Same quality intent as the CPU rows below (crf 18 for h264/hevc,
+        # 32 for av1).
+        try:
+            nv = oasis_nvenc.plan(c, "balanced" if c == "av1" else "high")
+        except Exception:
+            nv = None
+        if nv is not None:
+            return nv[0], "yuv420p", nv[1], 0
     if c == "hevc":
         return "hevc", "yuv420p", {"crf": "18", "preset": "veryfast"}, None
     if c == "vp9":
@@ -647,7 +687,32 @@ def _stream_copy_concat(input_paths, output_path, use_audio, probes=None):
     }
 
 
-def _reencode_concat(input_paths, output_path, use_audio, probes=None):
+def _reencode_concat(input_paths, output_path, use_audio, probes=None, gpu=False):
+    """Re-encode concat on the GPU when asked and able, CPU otherwise. Any
+    GPU failure (other than a plain input error) retries once on the CPU."""
+    if not probes:
+        probes, _ref = _probe_movie_inputs(input_paths)
+    if gpu and _nvenc_supports(probes[0]["codec"]):
+        try:
+            info = _reencode_concat_once(
+                input_paths, output_path, use_audio, probes, True)
+            info["encoder"] = "nvenc"
+            return info
+        except Exception as e:
+            if type(e) is ValueError:
+                raise
+            _mv_log("GPU re-encode failed (%r); retrying on CPU" % (e,))
+            try:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+            except OSError:
+                pass
+    info = _reencode_concat_once(input_paths, output_path, use_audio, probes, False)
+    info["encoder"] = "cpu"
+    return info
+
+
+def _reencode_concat_once(input_paths, output_path, use_audio, probes=None, gpu=False):
     """Decode/re-encode concat -- safe for mixed originals + Clip outputs."""
     import av
     from fractions import Fraction
@@ -666,7 +731,7 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
                 }
                 break
 
-    encoder, pix_fmt, vopts, bit_rate = _reencode_profile(ref["codec"])
+    encoder, pix_fmt, vopts, bit_rate = _reencode_profile(ref["codec"], gpu)
     with av.open(output_path, mode="w") as out:
         v_out = out.add_stream(encoder, rate=fps)
         v_out.width = width
@@ -685,6 +750,13 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
         if bit_rate is not None:
             try:
                 v_out.bit_rate = bit_rate
+            except Exception:
+                pass
+        if (_canonical_codec(ref["codec"]) == "hevc"
+                and output_path.lower().endswith((".mp4", ".mov"))):
+            # "hvc1" is the hevc label browsers and Apple players expect.
+            try:
+                v_out.codec_context.codec_tag = "hvc1"
             except Exception:
                 pass
 
@@ -737,7 +809,7 @@ def _reencode_concat(input_paths, output_path, use_audio, probes=None):
     }
 
 
-def _concat_movie(input_paths, use_audio):
+def _concat_movie(input_paths, use_audio, gpu=False):
     """Create Movie: keep the clips' codec and container."""
     probes, ref = _probe_movie_inputs(input_paths)
     copy_ok = _stream_copy_viable(probes)
@@ -750,7 +822,8 @@ def _concat_movie(input_paths, use_audio):
     _mv_log(f"seam-repair build: {len(probes)} clips, "
             f"codec={_canonical_codec(ref['codec'])} container={ext}, "
             f"audio={'on' if use_audio else 'OFF'}, "
-            f"path={'stream_copy' if copy_ok else 'reencode'} "
+            f"path={'stream_copy' if copy_ok else 'reencode'}, "
+            f"gpu={'on' if gpu else 'off'} "
             f"-> {os.path.basename(output_path)}")
     try:
         if copy_ok:
@@ -767,10 +840,10 @@ def _concat_movie(input_paths, use_audio):
                     pass
                 output_path, rel_path = _next_movie_path(ext)
                 info = _reencode_concat(
-                    input_paths, output_path, use_audio, probes)
+                    input_paths, output_path, use_audio, probes, gpu)
         else:
             info = _reencode_concat(
-                input_paths, output_path, use_audio, probes)
+                input_paths, output_path, use_audio, probes, gpu)
     except Exception:
         try:
             if os.path.exists(output_path):
@@ -792,6 +865,7 @@ async def vo_create_movie(request):
         return web.json_response({"error": "Bad request body."}, status=400)
     entries = data.get("entries") or []
     use_audio = bool(data.get("use_audio"))
+    gpu = data.get("gpu_encode", True) is not False
     if not isinstance(entries, list) or len(entries) < 2:
         return web.json_response(
             {"error": "Need at least two saved clips."}, status=400)
@@ -822,7 +896,7 @@ async def vo_create_movie(request):
             {"error": "PyAV not installed."}, status=500)
 
     try:
-        info = _concat_movie(paths, use_audio)
+        info = _concat_movie(paths, use_audio, gpu)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     except Exception as e:
@@ -841,6 +915,7 @@ async def vo_create_movie(request):
         "subfolder": subfolder,
         "size_bytes": info["size_bytes"],
         "duration_s": info["duration_s"],
+        "encoder": info.get("encoder", "copy" if info.get("method") != "reencode" else "cpu"),
     })
 
 
@@ -888,7 +963,30 @@ def _frame_time_s(frame, stream):
     return float(frame.pts * stream.time_base)
 
 
-def _trim_video(input_path, output_path, start_s, end_s):
+def _trim_video(input_path, output_path, start_s, end_s, gpu=False):
+    """Trim on the GPU (h264_nvenc) when asked and able, CPU libx264
+    otherwise. Any GPU failure other than a plain input error (bad range,
+    no frames) retries once on the CPU."""
+    if gpu and _nvenc_supports("h264"):
+        try:
+            info = _trim_video_once(input_path, output_path, start_s, end_s, True)
+            info["encoder"] = "nvenc"
+            return info
+        except Exception as e:
+            if type(e) is ValueError:
+                raise
+            print(f"[Oasis] GPU clip encode failed ({e!r}); retrying on CPU")
+            try:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+            except OSError:
+                pass
+    info = _trim_video_once(input_path, output_path, start_s, end_s, False)
+    info["encoder"] = "cpu"
+    return info
+
+
+def _trim_video_once(input_path, output_path, start_s, end_s, gpu=False):
     """Re-encode [start_s, end_s) of input into output_path (H.264 + AAC).
 
     Stream-copy is unreliable for arbitrary cut points (keyframe alignment),
@@ -927,7 +1025,8 @@ def _trim_video(input_path, output_path, start_s, end_s):
         v_tb = Fraction(1, int(round(src_fps)) or 25)
 
         with av.open(output_path, mode="w") as out:
-            v_out = out.add_stream("libx264", rate=fps)
+            nv = oasis_nvenc.plan("h264", "high") if (gpu and oasis_nvenc) else None
+            v_out = out.add_stream(nv[0] if nv else "libx264", rate=fps)
             v_out.width = width
             v_out.height = height
             v_out.pix_fmt = "yuv420p"
@@ -936,10 +1035,13 @@ def _trim_video(input_path, output_path, start_s, end_s):
                 v_out.codec_context.time_base = v_tb
             except Exception:
                 pass
-            try:
-                v_out.options = {"crf": "18", "preset": "veryfast"}
-            except Exception:
-                pass
+            if nv:
+                oasis_nvenc.apply(v_out, nv[1])
+            else:
+                try:
+                    v_out.options = {"crf": "18", "preset": "veryfast"}
+                except Exception:
+                    pass
 
             a_out = None
             resampler = None
@@ -966,7 +1068,11 @@ def _trim_video(input_path, output_path, start_s, end_s):
             audio_done = a_in is None
 
             for packet in inn.demux(*streams):
-                if packet.dts is None and packet.pts is None:
+                # Timestamp-less packets are skipped, except the empty
+                # end-of-stream packet: decoding it flushes the frames the
+                # decoder is still holding (B-frame sources), so a range
+                # that runs to the end keeps its last frames.
+                if packet.dts is None and packet.pts is None and packet.size:
                     continue
                 try:
                     decoded = packet.decode()
@@ -1061,7 +1167,8 @@ async def vo_clip_video(request):
 
     output_path, rel_path, out_name = _next_clip_path()
     try:
-        info = _trim_video(path, output_path, start_s, end_s)
+        gpu = data.get("gpu_encode", True) is not False
+        info = _trim_video(path, output_path, start_s, end_s, gpu)
     except ValueError as e:
         try:
             if os.path.exists(output_path):
@@ -1087,6 +1194,7 @@ async def vo_clip_video(request):
         "duration_s": info["duration_s"],
         "size_bytes": info["size_bytes"],
         "fps": info["fps"],
+        "encoder": info.get("encoder", "cpu"),
     })
 
 
@@ -1103,6 +1211,93 @@ async def vo_clip_video(request):
 # Note `filename` in the query is NOT the video: ComfyUI's drop handler
 # names the uploaded file after that param (frame_N.png). The source video
 # is `video` + `subfolder` + `type`.
+
+
+# ── Browser preview copy (proxy) ────────────────────────────────────────────
+#
+# FFV1 and ProRes never play in a browser, and hevc depends on the browser
+# and GPU. For those, the viewer asks for a small h264/AAC copy at the same
+# size, fps and frame count and plays that instead. Only the <video> element
+# uses it: Save, Clip, frame drag and the LTX tail all read the real file.
+# Copies live in temp/oasis_proxy (ComfyUI clears temp on restart) and are
+# keyed by the source's path, size and mtime, so each file is built once.
+
+_PROXY_SUBDIR = "oasis_proxy"
+_proxy_lock = threading.Lock()
+
+
+def _proxy_name(src):
+    import hashlib
+    st = os.stat(src)
+    key = f"{os.path.realpath(src)}|{st.st_size}|{st.st_mtime_ns}"
+    return "proxy_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16] + ".mp4"
+
+
+def _make_proxy(src, dst, gpu):
+    """Build dst from src unless it already exists. Serialized so two
+    requests for the same file don't both encode it."""
+    with _proxy_lock:
+        if os.path.isfile(dst):
+            return
+        part = dst[:-4] + ".part.mp4"
+        try:
+            # A whole-file "trim" is exactly a browser-safe re-encode:
+            # h264 yuv420p + AAC, frame-accurate timing, GPU with CPU fallback.
+            _trim_video(src, part, 0.0, float("inf"), gpu)
+            os.replace(part, dst)
+        except Exception:
+            try:
+                if os.path.exists(part):
+                    os.remove(part)
+            except OSError:
+                pass
+            raise
+
+
+@routes.post("/video_oasis/proxy")
+@require_same_origin
+async def vo_proxy(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Bad request body."}, status=400)
+    filename = (data.get("filename") or "").strip()
+    subfolder = (data.get("subfolder") or "").strip()
+    type_ = (data.get("type") or "temp").strip()
+    gpu = data.get("gpu_encode", True) is not False
+
+    path = _resolve_view_path(filename, subfolder, type_)
+    if not path or not os.path.isfile(path):
+        shown = f"{subfolder}/{filename}" if subfolder else filename
+        return web.json_response(
+            {"error": f"Missing on disk: {shown}"}, status=404)
+
+    try:
+        import av  # noqa: F401
+    except ImportError:
+        return web.json_response(
+            {"error": "PyAV not installed."}, status=500)
+
+    out_dir = os.path.join(folder_paths.get_temp_directory(), _PROXY_SUBDIR)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        name = _proxy_name(path)
+        dst = os.path.join(out_dir, name)
+        if not os.path.isfile(dst):
+            import asyncio
+            await asyncio.get_running_loop().run_in_executor(
+                None, _make_proxy, path, dst, gpu)
+    except Exception as e:
+        log.warning("VideoOasis: preview copy failed for %s: %r", path, e)
+        return web.json_response(
+            {"error": f"Preview copy failed: {e}"}, status=500)
+
+    return web.json_response({
+        "ok": True,
+        "filename": name,
+        "subfolder": _PROXY_SUBDIR,
+        "type": "temp",
+    })
 
 
 @routes.get("/video_oasis/frame")

@@ -161,6 +161,7 @@ def _adapt_flat_state(st):
                    "codec": st.get("codec", "auto"),
                    "quality": st.get("quality", "balanced"),
                    "crf": st.get("crf", 20),
+                   "gpu_encode": st.get("gpu_encode", True) is not False,
                    "save_prefix": st.get("save_prefix", "video/LTX23Oasis")},
     }
 

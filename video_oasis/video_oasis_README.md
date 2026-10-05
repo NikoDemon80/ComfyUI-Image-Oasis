@@ -83,13 +83,39 @@ the widget, not as separate Comfy widgets):
 | **Format** | `auto`, `mp4`, `webm`, `mkv`, `mov` (toggle group) |
 | **Codec** | `auto`, `h264`, `hevc`, `vp9`, `av1`, `ffv1`, `prores` (toggle group) |
 | **Quality** | `balanced` (default) / `high` / `small` / `custom` (exposes CRF). Hidden for FFV1 and ProRes. |
+| **GPU Encode** | `On` (default) / `Off`. NVIDIA NVENC encoding. Only shown when NVENC works on this machine and the codec has a GPU version (h264, hevc; av1 on RTX 40-series and newer). |
 | **Save prefix** | Path stem under `output/` (default `video/VideoOasis`) |
 
 `auto` everything matches stock Save Video's fast path when possible. webm
 accepts VP9/AV1; mp4 takes h264/hevc/AV1; mkv takes anything including FFV1; mov
 takes ProRes 422 HQ. **FFV1 + FLAC** is true lossless of the decoded 8-bit RGB.
 **ProRes 422 HQ + PCM** is visually lossless and NLE-friendly. HEVC, FFV1 and
-ProRes may not play in-browser; the file on disk is fine.
+ProRes play through a browser preview copy (below); the file on disk is untouched.
+
+**Browser preview copies.** FFV1 and ProRes never play in a browser, and
+hevc only plays in some browsers. When the viewer can't play a file it shows
+"Preparing browser preview" and builds a small h264 copy at the same size,
+fps and frame count (GPU-encoded when GPU Encode is on), then plays that. The
+info bar reads "preview copy" while it's in use. Save, Clip, frame drag and the
+motion-context tail always use the real file. Copies live in
+`temp/oasis_proxy`, are built once per file, and clear when ComfyUI restarts.
+Scene-bar thumbnails for these files come from a server-side frame grab.
+hevc files in mp4/mov are now tagged `hvc1`, the label browsers and Apple
+players expect.
+
+**GPU Encode** notes:
+
+- With `auto`, GPU Encode writes h264 (a video loaded straight from a file is
+  still copied untouched, no encode at all)
+- Quality presets map to NVENC's quality scale (cq); the badge reads
+  `h264 nvenc cq 21` instead of `crf`
+- If the GPU encoder fails, that clip is re-encoded on the CPU and flagged
+  with a warning
+- **Clip** and the **Create Movie** re-encode fallback follow this setting.
+  Clips made with GPU Encode on and off have different headers, so keeping it
+  consistent lets Create Movie stream-copy more often
+- Biggest win on long movies and upscaled output; short clips barely notice.
+  NVENC files run slightly larger at the same quality
 
 ## Theme
 

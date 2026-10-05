@@ -1,6 +1,6 @@
 # Oasis Suite
 
-One ComfyUI pack with four nodes that share the same player language, save
+One ComfyUI pack with five nodes that share the same player language, save
 habits, and UI patterns. Install once; everything lands under
 `custom_nodes/ComfyUI-Image-Oasis/`.
 
@@ -10,12 +10,37 @@ habits, and UI patterns. Install once; everything lands under
 | **Video Oasis Viewer** | `VideoOasisPreview` | `video_oasis/` | [video_oasis/video_oasis_README.md](video_oasis/video_oasis_README.md) |
 | **LTX Oasis** | `LTX23Oasis` | `ltx23_oasis/` | [ltx23_oasis/ltx23_oasis_README.md](ltx23_oasis/ltx23_oasis_README.md) |
 | **Audio Oasis** | `AudioOasis` | `audio_oasis/` | [audio_oasis/audio_oasis_README.md](audio_oasis/audio_oasis_README.md) |
+| **Oasis Metadata** | `OasisMetadata` | `nodes_metadata.py` | Reads prompt + settings out of a saved PNG or video |
 
 Frontends live in `web/` (`image_oasis.js`, `video_oasis.js`, `ltx23_oasis.js`,
 `audio_oasis.js`).
 **License: GPL-3.0-or-later** for the whole pack (see [LICENSE](LICENSE)).
 
 ---
+
+## What's new in 1.9
+
+### GPU Encode (Video Oasis Viewer and LTX Oasis)
+
+**GPU Encode** (default On) encodes with NVIDIA NVENC: h264 and hevc on any
+RTX card, av1 on RTX 40-series and newer. It only shows when NVENC works on
+your machine. Clip and Create Movie follow it. A failed GPU encode is redone
+on the CPU with a warning.
+
+### Browser preview copies
+
+FFV1, ProRes, and hevc the browser can't play now preview through a small
+h264 copy. Save, Clip and frame drag still use the real file.
+
+### Oasis Metadata
+
+New `OasisMetadata` node: pick a saved PNG or video and get its prompt and
+Oasis settings as two STRING outputs.
+
+### Fixes
+
+- Clip no longer drops the last frames of B-frame sources
+- LTX Oasis no longer writes a leftover `ltxo_audio_diag.wav` to `output/`
 
 ## What's new in 1.8
 

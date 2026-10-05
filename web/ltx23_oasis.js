@@ -474,6 +474,60 @@ function viewURL(entry){
   });
   return api.apiURL(`/view?${q.toString()}`);
 }
+
+// ── Browser playback / preview copies ──
+// FFV1 and ProRes never play in a browser; hevc depends on the browser and
+// GPU. Entries the browser can't play are shown through a small h264 copy
+// built by /video_oasis/proxy. Only the <video> element uses it: Save, Clip,
+// frame drag and the LTX tail always read the real file.
+const NEVER_PLAYABLE = ["ffv1", "prores"];
+let HEVC_PLAYABLE = null;
+const hevcPlayable = () => {
+  if (HEVC_PLAYABLE === null) {
+    try {
+      const v = document.createElement("video");
+      HEVC_PLAYABLE = ["hvc1.1.6.L93.B0", "hev1.1.6.L93.B0"].some(
+        (c) => v.canPlayType(`video/mp4; codecs="${c}"`) === "probably");
+    } catch { HEVC_PLAYABLE = false; }
+  }
+  return HEVC_PLAYABLE;
+};
+const needsProxy = (entry) => !!entry && (NEVER_PLAYABLE.includes(entry.codec) ||
+  (entry.codec === "hevc" && !hevcPlayable()));
+// URL the <video> element plays: the preview copy when there is one.
+const playURL = (entry) => viewURL(entry.proxy ? { ...entry.proxy, rand: entry.rand } : entry);
+const ensureProxy = (entry, gpu) => {
+  if (entry.proxy) return Promise.resolve(entry.proxy);
+  if (!entry._proxyP) {
+    entry._proxyP = api.fetchApi("/video_oasis/proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: entry.filename,
+        subfolder: entry.subfolder || "",
+        type: entry.type || "temp",
+        gpu_encode: gpu !== false,
+      }),
+    }).then(async (r) => {
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+      entry.proxy = { filename: d.filename, subfolder: d.subfolder || "", type: d.type || "temp" };
+      return entry.proxy;
+    }).catch((err) => {
+      entry._proxyP = null;
+      entry.proxyFailed = true;
+      entry.proxyError = String(err?.message || err);
+      throw err;
+    });
+  }
+  return entry._proxyP;
+};
+// Scene-bar thumb for files the browser can't decode: a frame from the backend.
+const frameThumbURL = (entry) => api.apiURL(`/video_oasis/frame?${new URLSearchParams({
+  video: entry.filename, subfolder: entry.subfolder || "", type: entry.type || "temp",
+  frame: "1", rand: entry.rand ?? "",
+}).toString()}`);
+const PROXY_NOTE = "Playing a browser-friendly preview copy. Save, Clip and frame drag use the original file.";
 function fmtTime(t){
   if (!isFinite(t)) return "0:00.00";
   const m = Math.floor(t / 60);
@@ -504,7 +558,6 @@ const CONTAINER_CODECS = {
   mov:["h264","hevc","prores"],
 };
 const LOSSLESS_CODECS = ["ffv1","prores"];
-const BROWSER_ODD_CODECS = ["hevc","ffv1","prores"];
 const snapEncodeCodec = (st, codec) => {
   st.codec = codec;
   const home = CODEC_HOME[codec];
@@ -514,10 +567,32 @@ const snapEncodeCodec = (st, codec) => {
 };
 const encodeHint = (codec) => {
   if (codec === "ffv1")
-    return "FFV1 + FLAC in mkv: true lossless of the decoded frames. Will not play in-browser; the file on disk is fine. Save still copies, no re-encode.";
+    return "FFV1 + FLAC in mkv: true lossless of the decoded frames. The viewer plays a quick preview copy; Save copies the real file, no re-encode.";
   if (codec === "prores")
-    return "ProRes 422 HQ + PCM in mov: NLE-friendly, visually lossless, much bigger. Will not play in-browser; the file on disk is fine. Save still copies, no re-encode.";
+    return "ProRes 422 HQ + PCM in mov: NLE-friendly, visually lossless, much bigger. The viewer plays a quick preview copy; Save copies the real file, no re-encode.";
   return "webm takes VP9/AV1; mp4 takes h264/hevc/AV1; mkv takes anything including FFV1; mov takes ProRes. Save copies the preview losslessly \u2014 no re-encode.";
+};
+// NVENC (GPU encode) availability, probed once per page load. Resolves to
+// the codecs the GPU can encode here; an empty list hides the toggle.
+let VOG_NVENC_PROMISE = null;
+const loadNvencCodecs = () => {
+  if (!VOG_NVENC_PROMISE) {
+    VOG_NVENC_PROMISE = api.fetchApi("/ltx23_oasis/nvenc")
+      .then(r => r.json())
+      .then(d => (Array.isArray(d?.codecs) ? d.codecs : []))
+      .catch(() => []);
+  }
+  return VOG_NVENC_PROMISE;
+};
+// "auto" encodes as h264 when GPU encode is on.
+const gpuEncodeShown = (codec, codecs) =>
+  Array.isArray(codecs) && codecs.includes(codec === "auto" ? "h264" : codec);
+const qualityLabel = (entry) => {
+  if (entry.codec === "auto") return "source";
+  if (entry.crf == null) return entry.codec;
+  return entry.encoder === "nvenc"
+    ? `${entry.codec} nvenc cq ${entry.crf}`
+    : `${entry.codec} crf ${entry.crf}`;
 };
 const SPEEDS = [0.25,0.5,1,1.5,2];
 const VSR_QUALITIES = ["LOW","MEDIUM","HIGH","ULTRA"];
@@ -619,7 +694,7 @@ app.registerExtension({
         sage:true,
         enable_vsr:false, vsr_resize_type:"scale by multiplier",
         vsr_scale:2.0, vsr_width:1920, vsr_height:1080, vsr_quality:"ULTRA",
-        format:"auto", codec:"auto", quality:"balanced", crf:20,
+        format:"auto", codec:"auto", quality:"balanced", crf:20, gpu_encode:true,
         save_prefix:"video/LTX23Oasis",
         ...archSeed(VOG_ARCHS[0]),
       };
@@ -632,6 +707,7 @@ app.registerExtension({
       let expandedPresets = new Set();
       let themeName = "";
       let ioId = "";
+      let nvencCodecs = [];   // filled by loadNvencCodecs(); empty = no GPU toggle
       let allModels = {diffusion:[],gguf_unet:[],clip_std:[],clip_gguf:[],
                        vaes:[],latent_upsamplers:[],loras:[],rtx_vsr:false};
       let llmModels = [], llmModel = "", wandBusy = false;
@@ -1210,6 +1286,13 @@ app.registerExtension({
         </div>
         ${st.quality==="custom"?`<div class="io-row"><span class="io-label">CRF</span><input class="io-input" type="number" data-f="crf" value="${esc(st.crf)}" step="1" min="0" max="63"/></div>`:""}
         `}
+        ${gpuEncodeShown(st.codec, nvencCodecs)?`<div class="io-row" title="Encode on the NVIDIA GPU (NVENC). Big speedup on long or upscaled clips; files run slightly larger at the same quality. Falls back to the CPU automatically if the GPU encoder fails. Clip and Create Movie follow this setting.">
+          <span class="io-label">GPU Encode</span>
+          <div class="io-toggle-grp">
+            <button class="io-tog${st.gpu_encode!==false?" active":""}" data-enc-gpu="on">On</button>
+            <button class="io-tog${st.gpu_encode===false?" active":""}" data-enc-gpu="off">Off</button>
+          </div>
+        </div>`:""}
         <div class="io-row"><span class="io-label">Save prefix</span><input class="io-input" data-f="save_prefix" value="${esc(st.save_prefix)}"/></div>
         <div class="io-mini" style="opacity:.7">${esc(encodeHint(st.codec))}</div>
       `);
@@ -1615,7 +1698,8 @@ app.registerExtension({
         for (let i = 1; i <= n; i++) {
           const next = cycleQueue[((qi >= 0 ? qi : -1) + i + n) % n];
           if (history.indexOf(next) >= 0) {
-            const url = viewURL(next);
+            if (!next.proxy && needsProxy(next)) return;   // built on demand
+            const url = playURL(next);
             if (preloadVideo.src !== url) preloadVideo.src = url;
             return;
           }
@@ -1697,7 +1781,16 @@ app.registerExtension({
         if (playMode === "cycle") advanceCycle();
       });
       video.addEventListener("error", () => {
-        if (!current()) return;
+        const cur = current();
+        if (!cur) return;
+        // The browser couldn't decode it (e.g. hevc it claimed to support):
+        // try a preview copy once before calling the file expired.
+        if (!cur.proxy && !cur.proxyTried && cur.filename) {
+          cur.proxyTried = true;
+          if (cur.codec === "hevc") HEVC_PLAYABLE = false;
+          showProxyWait(cur, true);
+          return;
+        }
         setFrameDragEnabled(false);
         video.style.display = "none";
         empty.style.display = "";
@@ -1744,9 +1837,9 @@ app.registerExtension({
           `${e.frames ?? "?"} frames \u00b7 ${fmtSize(e.size_bytes)}` +
           (e.has_audio ? " \u00b7 audio" : "") +
           (fileFallback ? ` \u00b7 <span class="vo-nolatent">\u26d3 no latent: decoding the file</span>` : "") +
-          (BROWSER_ODD_CODECS.includes(e.codec) ? "  (" + e.codec + " may not play in-browser; the file itself is fine)" : "");
+          (e.proxy ? " \u00b7 preview copy" : "");
         infoText.classList.toggle("vo-warn", !!e.warning);
-        infoText.title = e.warning || "";
+        infoText.title = e.warning || (e.proxy ? PROXY_NOTE : "");
         if (history.length > 1) {
           nav.style.display = "";
           counter.textContent = `${activeIdx + 1}/${history.length}`;
@@ -1818,18 +1911,44 @@ app.registerExtension({
           saveHdrBtn.title = "Save current preview to output folder";
         }
       };
+      // Browser can't play this entry directly: park the player, build (or
+      // reuse) the preview copy, then reload the entry if it's still showing.
+      const showProxyWait = (entry, autoplay) => {
+        setFrameDragEnabled(false);
+        try { video.pause(); } catch { /* */ }
+        video.removeAttribute("src");
+        try { video.load(); } catch { /* */ }
+        video.style.display = "none";
+        empty.style.display = "";
+        if (entry.proxyFailed) {
+          empty.textContent = /Missing on disk/.test(entry.proxyError || "")
+            ? "Preview expired (temp is cleared on restart). Re-run the workflow"
+            : `Couldn't build a browser preview for this ${entry.codec || "video"} file. The file itself is fine.`;
+          return;
+        }
+        empty.textContent = "Preparing browser preview\u2026";
+        const reload = () => {
+          const i = history.indexOf(entry);
+          if (i >= 0 && i === activeIdx) loadEntry(i, { autoplay });
+        };
+        ensureProxy(entry, st.gpu_encode).then(reload, reload);
+      };
+
       const loadEntry = (idx, { autoplay = true } = {}) => {
         if (idx < 0 || idx >= history.length) return;
         if (idx !== activeIdx) { clipInS = null; clipOutS = null; }
         activeIdx = idx;
         const entry = history[idx];
-        empty.style.display = "none";
-        video.style.display = "";
-        video.src = viewURL(entry);
-        setFrameDragEnabled(true);
-        if (autoplay) safePlay(); else video.pause();
-        const q = entry.codec === "auto" ? "source"
-                : (entry.crf != null ? `${entry.codec} crf ${entry.crf}` : entry.codec);
+        if (!entry.proxy && needsProxy(entry)) {
+          showProxyWait(entry, autoplay);
+        } else {
+          empty.style.display = "none";
+          video.style.display = "";
+          video.src = playURL(entry);
+          setFrameDragEnabled(true);
+          if (autoplay) safePlay(); else video.pause();
+        }
+        const q = qualityLabel(entry);
         badge.style.display = "";
         badge.textContent = (entry.warning ? "\u26a0 " : "") + `${entry.format} \u00b7 ${q}`;
         showBadge();
@@ -1862,6 +1981,15 @@ app.registerExtension({
       const makePoster = (entry) => new Promise((resolve) => {
         const t = entry.thumbEl;
         if (!t) return resolve();
+        if (!entry.proxy && needsProxy(entry)) {
+          // Can't decode it here; ask the backend for a frame instead.
+          const img = new Image();
+          const done = () => resolve();
+          img.onload = () => { t.style.backgroundImage = `url("${img.src}")`; done(); };
+          img.onerror = done;
+          img.src = frameThumbURL(entry);
+          return;
+        }
         const v = document.createElement("video");
         let released = false, cleaned = false;
         const release = () => { if (!released) { released = true; resolve(); } };
@@ -1886,7 +2014,7 @@ app.registerExtension({
         };
         const softT = setTimeout(release, 5000);
         const hardT = setTimeout(cleanup, 60000);
-        v.muted = true; v.preload = "auto"; v.src = viewURL(entry);
+        v.muted = true; v.preload = "auto"; v.src = playURL(entry);
         v.addEventListener("error", () => { clearTimeout(softT); cleanup(); });
         v.addEventListener("loadeddata", () => {
           draw();
@@ -2480,6 +2608,7 @@ app.registerExtension({
               start_s: clipInS,
               end_s: clipOutS,
               fps,
+              gpu_encode: st.gpu_encode !== false,
             }),
           });
           const data = await r.json();
@@ -2519,6 +2648,7 @@ app.registerExtension({
                 subfolder: e.subfolder || "",
               })),
               use_audio: !!movieAudio,
+              gpu_encode: st.gpu_encode !== false,
             }),
           });
           const data = await r.json();
@@ -2803,6 +2933,7 @@ app.registerExtension({
         });
         leftCol.querySelectorAll("[data-enc-format]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.format=b.dataset.encFormat;save();render();});
         leftCol.querySelectorAll("[data-enc-codec]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();snapEncodeCodec(st, b.dataset.encCodec);save();render();});
+        leftCol.querySelectorAll("[data-enc-gpu]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.gpu_encode=b.dataset.encGpu==="on";save();render();});
         leftCol.querySelectorAll("[data-enc-quality]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.quality=b.dataset.encQuality;save();render();});
         leftCol.querySelectorAll("[data-vsr-resize]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.vsr_resize_type=b.dataset.vsrResize;save();render();});
         leftCol.querySelectorAll("[data-vsr-quality]").forEach(b=>b.onclick=(e)=>{e.stopPropagation();st.vsr_quality=b.dataset.vsrQuality;save();render();});
@@ -3516,7 +3647,7 @@ app.registerExtension({
             execState: st,
             uiState: { open, taHeights, playMode, muted, speed, movieAudio },
             preview: {
-              history: history.map(({ thumbEl, rand, warned, ...keep }) => keep),
+              history: history.map(({ thumbEl, rand, warned, proxy, _proxyP, proxyFailed, proxyTried, proxyError, ...keep }) => keep),
               activeIdx,
             },
             wand: {
@@ -3637,6 +3768,7 @@ app.registerExtension({
         if(_origAdded) _origAdded.apply(this, arguments);
         registerIoHandler();
         Promise.all([loadModels(), loadPresets(), loadLlmModels(), loadTheme(), loadNamedThemes()]).then(()=>render());
+        loadNvencCodecs().then(c=>{ nvencCodecs = c; render(); });
       };
       const _origRemoved = selfNode.onRemoved;
       selfNode.onRemoved = function(){
