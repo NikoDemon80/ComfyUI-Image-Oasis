@@ -18,6 +18,12 @@ Frontends live in `web/` (`image_oasis.js`, `video_oasis.js`, `ltx23_oasis.js`,
 
 ---
 
+## What's new in 1.9.1
+
+Click the video in LTX Oasis or Video Oasis Viewer to play/pause. Same as
+Space or the ▶/⏸ button. Frame drag still works; the lightbox is unchanged
+(click/drag pans, double-click resets).
+
 ## What's new in 1.9
 
 ### GPU Encode (Video Oasis Viewer and LTX Oasis)
@@ -200,7 +206,7 @@ for the first time (they were never a public release on their own):
 A preview-first Save Video replacement. Incoming `VIDEO` encodes to temp and
 plays in-node; nothing hits your output folder until you press Save.
 
-- Scrub / frame-step / mute / speed / lightbox (scroll zoom, drag pan)
+- Click the video to play/pause; scrub / frame-step / mute / speed / lightbox (scroll zoom, drag pan)
 - Frame drag onto other nodes' image inputs (Load Image, refs, LTX guides, ...)
 - Playback: **off → loop → cycle** (cycle walks the scene bar like a dailies reel)
 - **Scene bar** (up to 24, raised to 48 in 1.6): click to recall, delete,

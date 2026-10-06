@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.9.1
+
+Click-to-pause in the player. Class ids unchanged.
+
+### Video Oasis Viewer and LTX Oasis
+
+#### Added
+- Click the video to play/pause, same as Space or the ▶/⏸ button. Frame
+  drag still works (a real drag never counts as a click). Off in the
+  lightbox, where click/drag pans and double-click resets.
+
+---
+
 ## v1.9.0
 
 NVENC GPU encode, browser preview copies for FFV1 / ProRes / hevc, and a new

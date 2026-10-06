@@ -20,7 +20,7 @@ same tensor through so you can keep chaining.
 ## Player
 
 - Scrub bar with frame counter
-- ▶/⏸ (**Space**), frame-step ⏮/⏭ (arrows; Shift = ~1 second)
+- ▶/⏸ (**Space**, or click the video), frame-step ⏮/⏭ (arrows; Shift = ~1 second)
 - Mute, playback speed, ⛶ **lightbox** (scroll = zoom, drag = pan, double-click = reset)
 - Loop button cycles: **off → loop** (repeat current clip) **→ cycle** (play
   through the scene bar left-to-right, a rolling dailies reel)

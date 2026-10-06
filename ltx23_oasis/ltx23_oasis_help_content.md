@@ -111,7 +111,7 @@ Both off by default. With a reference image active, Spatial Upsample can drift y
 
 ## The player & scene bar
 
-Scrub bar with a frame counter, ▶/⏸ (Space), frame-step ⏮/⏭ (arrow keys; Shift = 1 second), mute, playback speed, and ⛶ lightbox (scroll = zoom, drag = pan, double-click = reset). Pause on any frame and **drag the video** onto Start or a beat guide to reuse that frame.
+Scrub bar with a frame counter, ▶/⏸ (Space, or click the video), frame-step ⏮/⏭ (arrow keys; Shift = 1 second), mute, playback speed, and ⛶ lightbox (scroll = zoom, drag = pan, double-click = reset). Pause on any frame and **drag the video** onto Start or a beat guide to reuse that frame.
 
 **Clip**: scrub to a frame and press **[** (mark in) then **]** (mark out), then **Clip**. That writes a trimmed copy under `output/video/clip_NNNNN.mp4` and adds it to the scene bar. Useful for keeping only the stretch you want before Create Movie.
 

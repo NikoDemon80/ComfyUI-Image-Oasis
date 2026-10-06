@@ -177,7 +177,7 @@ is cached - toggling Upscale re-runs only upsample + decode. Off by default
 
 Same toolkit as [Video Oasis Viewer](../video_oasis/video_oasis_README.md):
 
-- Scrub, Space, arrows, mute, speed, lightbox
+- Scrub, Space or click the video to play/pause, arrows, mute, speed, lightbox
 - Drag the paused frame onto Start, a beat guide, or any image input on
   the graph
 - **Clip** (`[` / `]` then Clip)

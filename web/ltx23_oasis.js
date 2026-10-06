@@ -1775,6 +1775,13 @@ app.registerExtension({
       video.addEventListener("loadedmetadata", syncTime);
       video.addEventListener("play", () => (playBtn.textContent = "\u23f8"));
       video.addEventListener("pause", () => (playBtn.textContent = "\u25b6"));
+      // Click the video to play/pause. A real frame drag never fires click.
+      // Off in the lightbox: there click/drag pans and double-click resets.
+      video.addEventListener("click", (e) => {
+        if (lightboxOpen) return;
+        e.stopPropagation();
+        togglePlay();
+      });
       // Cycle-mode advance. video.loop is off in cycle mode so `ended`
       // actually fires; in loop mode it doesn't (native repeat).
       video.addEventListener("ended", () => {
